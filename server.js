@@ -25,8 +25,20 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ✅ Middleware
+const allowedOrigins = [
+  "https://emsfrontend-wn43.onrender.com", // your live frontend on Render
+  "http://localhost:5173"                  // local dev frontend
+];
+
 app.use(cors({
-  origin: process.env.CLIENT_URL || ["http://localhost:5173"],
+  origin: function(origin, callback){
+    // allow requests with no origin (like Postman) or if in allowedOrigins
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
   methods: ["GET", "POST", "PUT", "DELETE"],
   credentials: true
 }));
