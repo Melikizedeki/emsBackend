@@ -26,7 +26,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // ✅ Middleware
 const allowedOrigins = [
-  "https://emsfrontend-wn43.onrender.com", // your live frontend on Render
+  https://emsfrontend-wn43.onrender.com, // your live frontend on Render
   "http://localhost:5173"                  // local dev frontend
 ];
 
