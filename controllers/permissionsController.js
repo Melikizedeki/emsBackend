@@ -25,6 +25,23 @@ export const createPermission = async (req, res) => {
   }
 };
 
+// ✅ Make sure this exists exactly
+export const admingetAllPermissions = (req, res) => {
+  const sql = `
+    SELECT p.id, p.employee_id, e.name AS employee_name, p.type AS permission_type, 
+           p.reason, p.status, p.admin_id, p.admin_comment, p.requested_on
+    FROM permission p
+    JOIN employee e ON p.employee_id = e.id
+    ORDER BY p.requested_on DESC
+  `;
+
+  db.query(sql, (err, result) => {
+    if (err) return res.json({ Status: false, Error: err });
+    return res.json({ Status: true, Result: result });
+  });
+};
+
+
 // ================================
 // Get all permissions for a specific staff member
 // ================================
