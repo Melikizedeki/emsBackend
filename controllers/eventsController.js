@@ -126,7 +126,7 @@ export const getPaymentsByEvent = async (req, res) => {
 // ================================
 // GET TOTAL EVENTS
 // ================================
-export const getTotalEvents = async (req, res) => {
+export const getTotalEventss = async (req, res) => {
   try {
     const sql = "SELECT COUNT(*) AS total FROM event";
     const [result] = await pool.query(sql);
