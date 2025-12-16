@@ -1,21 +1,27 @@
 import jwt from "jsonwebtoken";
-import db from "../configs/db.js";
-import bcrypt from "bcrypt"; 
+import pool from "../configs/db.js";
+import bcrypt from "bcrypt";
 
 // --- LOGIN ---
-export const login = (req, res) => {
-  const { email, password } = req.body;
+export const login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-  if (!email || !password) {
-    return res.json({ loginStatus: false, Error: "Email and password are required" });
-  }
+    if (!email || !password) {
+      return res.json({
+        loginStatus: false,
+        Error: "Email and password are required",
+      });
+    }
 
-  const sql = "SELECT * FROM employee WHERE email = ?";
-  db.query(sql, [email], async (err, results) => {
-    if (err) return res.json({ loginStatus: false, Error: err.message });
+    const sql = "SELECT * FROM employee WHERE email = ?";
+    const [results] = await pool.query(sql, [email]);
 
     if (results.length === 0) {
-      return res.json({ loginStatus: false, Error: "Invalid email or password" });
+      return res.json({
+        loginStatus: false,
+        Error: "Invalid email or password",
+      });
     }
 
     const user = results[0];
@@ -23,13 +29,16 @@ export const login = (req, res) => {
     // ✅ Compare hashed password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.json({ loginStatus: false, Error: "Invalid email or password" });
+      return res.json({
+        loginStatus: false,
+        Error: "Invalid email or password",
+      });
     }
 
     // ✅ Create JWT token
     const token = jwt.sign(
       { id: user.id, role: user.role },
-      "2018..GilituEnterprisesLimited",
+      process.env.JWT_SECRET || "2018..GilituEnterprisesLimited",
       { expiresIn: "7d" }
     );
 
@@ -37,7 +46,7 @@ export const login = (req, res) => {
     res.cookie("token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
@@ -51,16 +60,25 @@ export const login = (req, res) => {
         name: user.name,
       },
     });
-  });
+  } catch (err) {
+    console.error("❌ Login error:", err.message);
+    return res.status(500).json({
+      loginStatus: false,
+      Error: "Database error",
+    });
+  }
 };
 
-
-
+// --- LOGOUT ---
 export const logout = (req, res) => {
   res.clearCookie("token", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "None",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
   });
-  return res.json({ success: true, message: "Logged out successfully" });
+
+  return res.json({
+    success: true,
+    message: "Logged out successfully",
+  });
 };
