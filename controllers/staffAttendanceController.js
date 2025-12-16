@@ -1,4 +1,5 @@
-import db from "../configs/db.js";
+// controllers/attendanceController.js
+import pool from "../configs/db.js";
 
 const GEOFENCE_CENTER = { lat: -3.69019, lng: 33.41387 };
 const GEOFENCE_RADIUS = 100; // meters
@@ -24,117 +25,114 @@ const getTzDateTime = () => {
   };
 };
 
-// ✅ Check-in
-export const checkIn = (req, res) => {
-  const { numerical_id, latitude, longitude } = req.body;
-  if (!latitude || !longitude)
-    return res.status(400).json({ message: "Coordinates required" });
+// ================= CHECK-IN =================
+export const checkIn = async (req, res) => {
+  try {
+    const { numerical_id, latitude, longitude } = req.body;
+    if (!latitude || !longitude)
+      return res.status(400).json({ message: "Coordinates required" });
 
-  const distance = haversineDistance(latitude, longitude, GEOFENCE_CENTER.lat, GEOFENCE_CENTER.lng);
-  if (distance > GEOFENCE_RADIUS)
-    return res.status(400).json({ message: "Outside company area" });
+    const distance = haversineDistance(latitude, longitude, GEOFENCE_CENTER.lat, GEOFENCE_CENTER.lng);
+    if (distance > GEOFENCE_RADIUS)
+      return res.status(400).json({ message: "Outside company area" });
 
-  const { date, time } = getTzDateTime();
+    const { date, time } = getTzDateTime();
+    let status = "pending";
 
-  let status = "pending";
-  // Day morning windows
-  if (time >= "07:00:00" && time <= "07:59:59") status = "present";
-  else if (time >= "08:00:00" && time <= "08:59:59") status = "late";
-  else if (time >= "09:00:00" && time <= "17:59:59") status = "absent";
-  // Night windows (19:30-20:59 present/late, absent 21:00-05:59)
-  else if (time >= "19:30:00" && time <= "19:59:59") status = "present";
-  else if (time >= "20:00:00" && time <= "20:59:59") status = "late";
-  else if (time >= "21:00:00" || time <= "05:59:59") status = "absent";
+    if (time >= "07:00:00" && time <= "07:59:59") status = "present";
+    else if (time >= "08:00:00" && time <= "08:59:59") status = "late";
+    else if (time >= "09:00:00" && time <= "17:59:59") status = "absent";
+    else if (time >= "19:30:00" && time <= "19:59:59") status = "present";
+    else if (time >= "20:00:00" && time <= "20:59:59") status = "late";
+    else if (time >= "21:00:00" || time <= "05:59:59") status = "absent";
 
-  db.query("SELECT * FROM attendance WHERE numerical_id=? AND date=?", [numerical_id, date], (err, rows) => {
-    if (err) return res.status(500).json({ message: "Server error" });
+    const [rows] = await pool.query(
+      "SELECT * FROM attendance WHERE numerical_id=? AND date=?",
+      [numerical_id, date]
+    );
 
     if (rows.length > 0 && rows[0].check_in_time)
       return res.status(400).json({ message: "Check-in already done today" });
 
     if (rows.length > 0) {
-      db.query(
+      await pool.query(
         "UPDATE attendance SET check_in_time=?, status=? WHERE numerical_id=? AND date=?",
-        [time, status, numerical_id, date],
-        (err2) =>
-          err2
-            ? res.status(500).json({ message: "Update failed" })
-            : res.json({ message: `Check-in ${status}`, time })
+        [time, status, numerical_id, date]
       );
     } else {
-      db.query(
+      await pool.query(
         "INSERT INTO attendance (numerical_id, date, check_in_time, status) VALUES (?, ?, ?, ?)",
-        [numerical_id, date, time, status],
-        (err2) =>
-          err2
-            ? res.status(500).json({ message: "Insert failed" })
-            : res.json({ message: `Check-in ${status}`, time })
+        [numerical_id, date, time, status]
       );
     }
-  });
+
+    res.json({ message: `Check-in ${status}`, time });
+  } catch (err) {
+    console.error("Check-in error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
 };
 
-// ✅ Check-out
-export const checkOut = (req, res) => {
-  const { numerical_id, latitude, longitude } = req.body;
-  if (!latitude || !longitude)
-    return res.status(400).json({ message: "Coordinates required" });
+// ================= CHECK-OUT =================
+export const checkOut = async (req, res) => {
+  try {
+    const { numerical_id, latitude, longitude } = req.body;
+    if (!latitude || !longitude)
+      return res.status(400).json({ message: "Coordinates required" });
 
-  const distance = haversineDistance(latitude, longitude, GEOFENCE_CENTER.lat, GEOFENCE_CENTER.lng);
-  if (distance > GEOFENCE_RADIUS)
-    return res.status(400).json({ message: "Outside company area" });
+    const distance = haversineDistance(latitude, longitude, GEOFENCE_CENTER.lat, GEOFENCE_CENTER.lng);
+    if (distance > GEOFENCE_RADIUS)
+      return res.status(400).json({ message: "Outside company area" });
 
-  const { date, time } = getTzDateTime();
+    const { date, time } = getTzDateTime();
+    let attendanceDate = date;
 
-  // Determine intended attendance date for checkout (night checkouts belong to previous date)
-  const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const local = new Date(utc + 3 * 3600000);
-  let attendanceDate = local.toISOString().split("T")[0];
+    const local = new Date();
+    local.setTime(local.getTime() + 3 * 3600000); // UTC+3
+    const isDayCheckout = time >= "18:00:00" && time <= "18:59:59";
+    const isNightCheckout = time >= "06:00:00" && time <= "06:59:59";
+    const isSatCheckout = time >= "15:00:00" && time <= "15:59:59" && local.getDay() === 6;
 
-  // Allowed checkout windows:
-  // - Day shifts: 18:00-18:59 (same date)
-  // - Night shifts: 06:00-06:59 (previous date)
-  // - Saturday early checkout for staff: 15:00-15:59
-  const isDayCheckout = time >= "18:00:00" && time <= "18:59:59";
-  const isNightCheckout = time >= "06:00:00" && time <= "06:59:59";
-  const isSatCheckout = time >= "15:00:00" && time <= "15:59:59" && local.getDay() === 6;
+    if (isNightCheckout) {
+      const y = new Date(local);
+      y.setDate(y.getDate() - 1);
+      attendanceDate = y.toISOString().split("T")[0];
+    }
 
-  if (isNightCheckout) {
-    const y = new Date(local);
-    y.setDate(y.getDate() - 1);
-    attendanceDate = y.toISOString().split("T")[0];
-  }
+    if (!isDayCheckout && !isNightCheckout && !isSatCheckout)
+      return res.status(400).json({ message: "Check-out not allowed at this time" });
 
-  if (!isDayCheckout && !isNightCheckout && !isSatCheckout) {
-    return res.status(400).json({ message: "Check-out not allowed at this time" });
-  }
+    const [rows] = await pool.query(
+      "SELECT * FROM attendance WHERE numerical_id=? AND date=?",
+      [numerical_id, attendanceDate]
+    );
 
-  db.query("SELECT * FROM attendance WHERE numerical_id=? AND date=?", [numerical_id, attendanceDate], (err, rows) => {
-    if (err) return res.status(500).json({ message: "Server error" });
     if (rows.length === 0 || !rows[0].check_in_time)
       return res.status(400).json({ message: "You must check-in first" });
 
-    db.query(
+    await pool.query(
       "UPDATE attendance SET check_out_time=? WHERE numerical_id=? AND date=?",
-      [time, numerical_id, date],
-      (err2) =>
-        err2
-          ? res.status(500).json({ message: "Check-out failed" })
-          : res.json({ message: "Check-out successful", time })
+      [time, numerical_id, attendanceDate]
     );
-  });
+
+    res.json({ message: "Check-out successful", time });
+  } catch (err) {
+    console.error("Check-out error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
 };
 
-// ✅ Get attendance by employee
-export const getAttendanceByEmployee = (req, res) => {
-  const { numerical_id } = req.params;
-  db.query(
-    "SELECT date, check_in_time, check_out_time, status FROM attendance WHERE numerical_id=? ORDER BY date DESC",
-    [numerical_id],
-    (err, rows) => {
-      if (err) return res.status(500).json({ message: "Server error" });
-      res.json(rows);
-    }
-  );
+// ================= GET ATTENDANCE =================
+export const getAttendanceByEmployee = async (req, res) => {
+  try {
+    const { numerical_id } = req.params;
+    const [rows] = await pool.query(
+      "SELECT date, check_in_time, check_out_time, status FROM attendance WHERE numerical_id=? ORDER BY date DESC",
+      [numerical_id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("Get attendance error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
 };
