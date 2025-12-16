@@ -1,4 +1,4 @@
-// controllers/permissionController.js
+// controllers/permissionsController.js
 import pool from "../configs/db.js"; // mysql2/promise
 
 // ================================
@@ -25,23 +25,6 @@ export const createPermission = async (req, res) => {
   }
 };
 
-// ✅ Make sure this exists exactly
-export const admingetAllPermissions = (req, res) => {
-  const sql = `
-    SELECT p.id, p.employee_id, e.name AS employee_name, p.type AS permission_type, 
-           p.reason, p.status, p.admin_id, p.admin_comment, p.requested_on
-    FROM permission p
-    JOIN employee e ON p.employee_id = e.id
-    ORDER BY p.requested_on DESC
-  `;
-
-  db.query(sql, (err, result) => {
-    if (err) return res.json({ Status: false, Error: err });
-    return res.json({ Status: true, Result: result });
-  });
-};
-
-
 // ================================
 // Get all permissions for a specific staff member
 // ================================
@@ -55,8 +38,8 @@ export const getAllStaffPermissions = async (req, res) => {
       WHERE employee_id = ?
       ORDER BY requested_on DESC
     `;
-
     const [result] = await pool.query(sql, [employee_id]);
+
     res.json({ Status: true, Result: result });
   } catch (err) {
     console.error("❌ Error fetching staff permissions:", err.message);
@@ -76,11 +59,11 @@ export const getAllPermissions = async (req, res) => {
       JOIN employee e ON p.employee_id = e.id
       ORDER BY p.requested_on DESC
     `;
-
     const [result] = await pool.query(sql);
+
     res.json({ Status: true, Result: result });
   } catch (err) {
-    console.error("❌ Error fetching permissions:", err.message);
+    console.error("❌ Error fetching all permissions:", err.message);
     res.status(500).json({ Status: false, Error: err.message });
   }
 };
@@ -118,6 +101,7 @@ export const getPendingPermissionsCount = async (req, res) => {
   try {
     const sql = "SELECT COUNT(*) AS total FROM permission WHERE status = 'Pending'";
     const [result] = await pool.query(sql);
+
     res.json({ Status: true, total: result[0].total });
   } catch (err) {
     console.error("❌ Error fetching pending permissions:", err.message);
