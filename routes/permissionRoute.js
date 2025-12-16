@@ -16,7 +16,7 @@ router.get("/permissions/staff/:employee_id", getAllStaffPermissions);
 
 // Admin routes
 
-router.get("/permissions/all", admingetAllPermissions); // Get all requests
+router.get("/permissions/all", getAllPermissions); // Get all requests
 router.put("/permissions/:permissionId", adminupdatePermissionStatus); // Approve/reject
 router.get("/pending-count", getPendingPermissionsCount);
 export { router as permissionsRouter };
