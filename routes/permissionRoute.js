@@ -2,7 +2,7 @@ import express from "express";
 import {
   createPermission,
   getAllStaffPermissions,
-  admingetAllPermissions,
+  getAllPermissions,
   adminupdatePermissionStatus,
   getPendingPermissionsCount
 
@@ -20,4 +20,6 @@ router.get("/permissions/all", admingetAllPermissions); // Get all requests
 router.put("/permissions/:permissionId", adminupdatePermissionStatus); // Approve/reject
 router.get("/pending-count", getPendingPermissionsCount);
 export { router as permissionsRouter };
+
+
 
