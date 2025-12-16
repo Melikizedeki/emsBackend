@@ -49,7 +49,7 @@ app.use(cookieParser());
 
 
 // ✅ Routes
-app.use("/api/credential", userRouter);
+app.use("/api", userRouter);
 app.use("/api", employeeRouter);
 app.use("/api", departmentRouter);
 app.use("/api", permissionsRouter);
