@@ -1,4 +1,5 @@
-import db from "../configs/db.js"; 
+// controllers/employeeController.js
+import pool from "../configs/db.js";
 import jwt from "jsonwebtoken";
 import multer from "multer";
 import ImageKit from "imagekit";
@@ -39,17 +40,14 @@ export const addEmployee = async (req, res) => {
       account_number,
       department_code,
       position,
-      salary, // ✅ added salary
+      salary,
       date_of_join,
       date_of_leave,
       status,
     } = req.body;
 
     if (!name || !email || !password || !req.file) {
-      return res.status(400).json({
-        Status: false,
-        Error: "Missing required fields or image",
-      });
+      return res.status(400).json({ Status: false, Error: "Missing required fields or image" });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -58,7 +56,7 @@ export const addEmployee = async (req, res) => {
       file: `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`,
       fileName: req.file.originalname,
     });
- 
+
     const sql = `
       INSERT INTO employee
       (employee_id, name, email, phone, password, role, date_of_birth,
@@ -82,91 +80,68 @@ export const addEmployee = async (req, res) => {
       account_number,
       department_code,
       position,
-      salary, // ✅ include salary value
+      salary,
       date_of_join,
       date_of_leave,
       status,
       imageResult.url,
     ];
 
-    db.query(sql, values, (err, result) => {
-      if (err) {
-        console.error("❌ Error adding employee:", err);
-        return res.status(500).json({ Status: false, Error: "Database Error" });
-      }
+    const [result] = await pool.query(sql, values);
 
-      const token = jwt.sign(
-        { id: result.insertId, role },
-        "2018..GilituEnterprisesLimited",
-        { expiresIn: "7d" }
-      );
+    const token = jwt.sign({ id: result.insertId, role }, "2018..GilituEnterprisesLimited", { expiresIn: "7d" });
 
-      return res.json({
-        Status: true,
-        Message: "✅ Employee added successfully",
-        EmployeeId: result.insertId,
-        Image: imageResult.url,
-        token,
-      });
+    return res.json({
+      Status: true,
+      Message: "✅ Employee added successfully",
+      EmployeeId: result.insertId,
+      Image: imageResult.url,
+      token,
     });
   } catch (err) {
-    console.error("❌ Error uploading image:", err);
-    return res.status(500).json({ Status: false, Error: "Image upload failed" });
+    console.error("❌ Error adding employee:", err.message);
+    return res.status(500).json({ Status: false, Error: "Server error" });
   }
 };
 
 // ================================
 // Get All Employees
 // ================================
-export const getEmployees = (req, res) => {
-  const sql = `
-    SELECT 
-      e.id,
-      e.employee_id,
-      e.name,
-      e.email,
-      e.password,
-      e.role,
-      e.phone,
-      e.salary,          -- ✅ include salary here
-      e.date_of_birth,
-      e.current_address,
-      e.permanent_address,
-      e.image,
-      e.position,
-      e.date_of_join,
-      e.date_of_leave,
-      e.status,
-      e.bank_name,
-      e.account_name,
-      e.account_number,
-      d.department_name AS department
-    FROM employee e
-    LEFT JOIN departments d ON e.department_code = d.department_code
-    ORDER BY e.id ASC
-  `;
-
-  db.query(sql, (err, result) => {
-    if (err) {
-      console.error("Error fetching employees:", err);
-      return res.json({ Status: false, Error: "Query Error" });
-    }
+export const getEmployees = async (req, res) => {
+  try {
+    const sql = `
+      SELECT 
+        e.id, e.employee_id, e.name, e.email, e.password, e.role, e.phone, e.salary,
+        e.date_of_birth, e.current_address, e.permanent_address, e.image, e.position,
+        e.date_of_join, e.date_of_leave, e.status, e.bank_name, e.account_name,
+        e.account_number, d.department_name AS department
+      FROM employee e
+      LEFT JOIN departments d ON e.department_code = d.department_code
+      ORDER BY e.id ASC
+    `;
+    const [result] = await pool.query(sql);
     return res.json({ Status: true, Result: result });
-  });
+  } catch (err) {
+    console.error("Error fetching employees:", err.message);
+    return res.status(500).json({ Status: false, Error: "Database error" });
+  }
 };
 
 // ================================
 // Get Employee by ID
 // ================================
-export const getEmployeeById = (req, res) => {
-  const id = req.params.id;
-  const query = "SELECT * FROM employee WHERE id = ?";
+export const getEmployeeById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sql = "SELECT * FROM employee WHERE id = ?";
+    const [result] = await pool.query(sql, [id]);
 
-  db.query(query, [id], (err, result) => {
-    if (err) return res.status(500).json({ Status: false, Error: "Database error" });
     if (result.length === 0) return res.status(404).json({ Status: false, Error: "Employee not found" });
-    res.json({ Status: true, Result: result[0] });
-  });
+    return res.json({ Status: true, Result: result[0] });
+  } catch (err) {
+    console.error("Error fetching employee:", err.message);
+    return res.status(500).json({ Status: false, Error: "Database error" });
+  }
 };
 
 // ================================
@@ -176,17 +151,10 @@ export const editEmployee = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const existingEmployee = await new Promise((resolve, reject) => {
-      db.query("SELECT * FROM employee WHERE id = ?", [id], (err, result) => {
-        if (err) return reject(err);
-        if (!result || result.length === 0) return resolve(null);
-        resolve(result[0]);
-      });
-    });
+    const [existingResult] = await pool.query("SELECT * FROM employee WHERE id = ?", [id]);
+    const existingEmployee = existingResult[0];
 
-    if (!existingEmployee) {
-      return res.status(404).json({ Status: false, Error: "Employee not found" });
-    }
+    if (!existingEmployee) return res.status(404).json({ Status: false, Error: "Employee not found" });
 
     const {
       employee_id,
@@ -203,17 +171,17 @@ export const editEmployee = async (req, res) => {
       account_number,
       department_code,
       position,
-      salary, // ✅ salary added here
+      salary,
       date_of_join,
       date_of_leave,
       status,
     } = req.body;
 
     let hashedPassword = existingEmployee.password;
-    let passwordChanged = false;
+    let token = null;
     if (password && password.trim() !== "") {
       hashedPassword = await bcrypt.hash(password, 10);
-      passwordChanged = true;
+      token = jwt.sign({ id, role: role || existingEmployee.role }, "2018..GilituEnterprisesLimited", { expiresIn: "7d" });
     }
 
     let imageUrl = existingEmployee.image;
@@ -225,29 +193,7 @@ export const editEmployee = async (req, res) => {
       imageUrl = imageResult.url;
     }
 
-    const updatedValues = {
-      employee_id: employee_id || existingEmployee.employee_id,
-      name: name || existingEmployee.name,
-      email: email || existingEmployee.email,
-      phone: phone || existingEmployee.phone,
-      password: hashedPassword,
-      role: role || existingEmployee.role,
-      date_of_birth: date_of_birth || existingEmployee.date_of_birth,
-      current_address: current_address || existingEmployee.current_address,
-      permanent_address: permanent_address || existingEmployee.permanent_address,
-      bank_name: bank_name || existingEmployee.bank_name,
-      account_name: account_name || existingEmployee.account_name,
-      account_number: account_number || existingEmployee.account_number,
-      department_code: department_code || existingEmployee.department_code,
-      position: position || existingEmployee.position,
-      salary: salary || existingEmployee.salary, // ✅ include salary
-      date_of_join: date_of_join || existingEmployee.date_of_join,
-      date_of_leave: date_of_leave || existingEmployee.date_of_leave,
-      status: status || existingEmployee.status,
-      image: imageUrl,
-    };
-
-    const sql = ` 
+    const sql = `
       UPDATE employee
       SET employee_id=?, name=?, email=?, phone=?, password=?, role=?, date_of_birth=?, 
           current_address=?, permanent_address=?, bank_name=?, account_name=?, account_number=?, 
@@ -256,144 +202,103 @@ export const editEmployee = async (req, res) => {
     `;
 
     const values = [
-      updatedValues.employee_id,
-      updatedValues.name,
-      updatedValues.email,
-      updatedValues.phone,
-      updatedValues.password,
-      updatedValues.role,
-      updatedValues.date_of_birth,
-      updatedValues.current_address,
-      updatedValues.permanent_address,
-      updatedValues.bank_name,
-      updatedValues.account_name,
-      updatedValues.account_number,
-      updatedValues.department_code,
-      updatedValues.position,
-      updatedValues.salary, // ✅ salary
-      updatedValues.date_of_join,
-      updatedValues.date_of_leave,
-      updatedValues.status,
-      updatedValues.image,
+      employee_id || existingEmployee.employee_id,
+      name || existingEmployee.name,
+      email || existingEmployee.email,
+      phone || existingEmployee.phone,
+      hashedPassword,
+      role || existingEmployee.role,
+      date_of_birth || existingEmployee.date_of_birth,
+      current_address || existingEmployee.current_address,
+      permanent_address || existingEmployee.permanent_address,
+      bank_name || existingEmployee.bank_name,
+      account_name || existingEmployee.account_name,
+      account_number || existingEmployee.account_number,
+      department_code || existingEmployee.department_code,
+      position || existingEmployee.position,
+      salary || existingEmployee.salary,
+      date_of_join || existingEmployee.date_of_join,
+      date_of_leave || existingEmployee.date_of_leave,
+      status || existingEmployee.status,
+      imageUrl,
       id,
     ];
 
-    db.query(sql, values, (err) => {
-      if (err) {
-        console.error("❌ Error updating employee:", err);
-        return res.status(500).json({ Status: false, Error: "Database Error" });
-      }
+    await pool.query(sql, values);
 
-      let token = null;
-      if (passwordChanged || updatedValues.role !== existingEmployee.role) {
-        token = jwt.sign(
-          { id, role: updatedValues.role },
-          "2018..GilituEnterprisesLimited",
-          { expiresIn: "7d" }
-        );
-      }
-
-      return res.json({
-        Status: true,
-        Message: "✅ Employee updated successfully",
-        EmployeeId: id,
-        Image: updatedValues.image,
-        ...(token && { token }),
-      });
+    return res.json({
+      Status: true,
+      Message: "✅ Employee updated successfully",
+      EmployeeId: id,
+      Image: imageUrl,
+      ...(token && { token }),
     });
   } catch (err) {
-    console.error("❌ Error in editEmployee:", err);
-    return res.status(500).json({ Status: false, Error: "Server Error" });
+    console.error("❌ Error updating employee:", err.message);
+    return res.status(500).json({ Status: false, Error: "Server error" });
   }
 };
 
 // ================================
 // Delete Employee
 // ================================
-export const deleteEmployee = (req, res) => {
-  const { id } = req.params;
+export const deleteEmployee = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sql = "DELETE FROM employee WHERE id = ?";
+    const [result] = await pool.query(sql, [id]);
 
-  const sql = "DELETE FROM employee WHERE id = ?";
-  db.query(sql, [id], (err, result) => {
-    if (err) {
-      console.error("Delete employee error:", err);
-      return res.json({ Status: false, Error: "Database error" });
-    }
-
-    if (result.affectedRows === 0) {
-      return res.json({ Status: false, Error: "Employee not found" });
-    }
-
+    if (result.affectedRows === 0) return res.json({ Status: false, Error: "Employee not found" });
     return res.json({ Status: true, Message: "Employee deleted successfully" });
-  });
+  } catch (err) {
+    console.error("Error deleting employee:", err.message);
+    return res.status(500).json({ Status: false, Error: "Database error" });
+  }
 };
 
 // ================================
 // Get Employee by employee_id
 // ================================
-export const getEmployeeByCode = (req, res) => {
-  const { employee_id } = req.params;
+export const getEmployeeByCode = async (req, res) => {
+  try {
+    const { employee_id } = req.params;
+    const sql = "SELECT id AS employee_numeric_id, name FROM employee WHERE employee_id = ?";
+    const [results] = await pool.query(sql, [employee_id]);
 
-  const sql = `
-    SELECT id AS employee_numeric_id, name 
-    FROM employee 
-    WHERE employee_id = ?
-  `;
-
-  db.query(sql, [employee_id], (err, results) => {
-    if (err) {
-      console.error("Error fetching employee:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
-
-    if (results.length === 0) {
-      return res.status(404).json({ message: "Employee not found" });
-    }
-
-    res.json(results[0]);
-  });
+    if (results.length === 0) return res.status(404).json({ message: "Employee not found" });
+    return res.json(results[0]);
+  } catch (err) {
+    console.error("Error fetching employee by code:", err.message);
+    return res.status(500).json({ message: "Database error" });
+  }
 };
 
 // ================================
-// Get User (current logged-in)
+// Get Current User
 // ================================
-export const getUser = (req, res) => {
+export const getUser = async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return res.status(401).json({ Status: false, Error: "No token provided" });
-    }
+    if (!authHeader) return res.status(401).json({ Status: false, Error: "No token provided" });
 
     const token = authHeader.split(" ")[1];
-    jwt.verify(token, "2018..GilituEnterprisesLimited", (err, decoded) => {
-      if (err) {
-        return res.status(401).json({ Status: false, Error: "Invalid token" });
-      }
+    const decoded = jwt.verify(token, "2018..GilituEnterprisesLimited");
+    const userId = decoded.id;
 
-      const userId = decoded.id;
+    const sql = "SELECT id, name, role, image FROM employee WHERE id = ?";
+    const [results] = await pool.query(sql, [userId]);
 
-      const sql = `SELECT id, name, role, image FROM employee WHERE id = ?`;
-      db.query(sql, [userId], (err, results) => {
-        if (err) {
-          console.error("❌ getUser query error:", err);
-          return res.status(500).json({ Status: false, Error: "Database error" });
-        }
+    if (results.length === 0) return res.status(404).json({ Status: false, Error: "User not found" });
 
-        if (results.length === 0) {
-          return res.status(404).json({ Status: false, Error: "User not found" });
-        }
-
-        return res.json({
-          Status: true,
-          id: results[0].id,
-          name: results[0].name,
-          role: results[0].role,
-          photo: results[0].image, // <-- very important
-        });
-      });
+    return res.json({
+      Status: true,
+      id: results[0].id,
+      name: results[0].name,
+      role: results[0].role,
+      photo: results[0].image,
     });
-  } catch (error) {
-    console.error("❌ getUser error:", error);
+  } catch (err) {
+    console.error("Error in getUser:", err.message);
     return res.status(500).json({ Status: false, Error: "Server error" });
   }
 };
@@ -401,65 +306,41 @@ export const getUser = (req, res) => {
 // ================================
 // Get Total Employees
 // ================================
-export const getTotalEmployees = (req, res) => {
-  const sql = `SELECT COUNT(*) AS total FROM employee`;
-
-  db.query(sql, (err, result) => {
-    if (err) {
-      console.error("Error counting employees:", err);
-      return res.status(500).json({ Status: false, Error: "Database error" });
-    }
-
+export const getTotalEmployees = async (req, res) => {
+  try {
+    const sql = "SELECT COUNT(*) AS total FROM employee";
+    const [result] = await pool.query(sql);
     return res.json({ Status: true, total: result[0].total });
-  });
+  } catch (err) {
+    console.error("Error counting employees:", err.message);
+    return res.status(500).json({ Status: false, Error: "Database error" });
+  }
 };
 
-
-//change password
+// ================================
+// Change Password
+// ================================
 export const changePassword = async (req, res) => {
   try {
-    const { id } = req.params; // employee numeric id
+    const { id } = req.params;
     const { currentPassword, newPassword } = req.body;
 
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ Status: false, Error: "Both current and new password are required" });
-    }
+    if (!currentPassword || !newPassword) return res.status(400).json({ Status: false, Error: "Both current and new password are required" });
 
-    // 1️⃣ Fetch the employee from DB
-    const employee = await new Promise((resolve, reject) => {
-      const sql = "SELECT password FROM employee WHERE id = ?";
-      db.query(sql, [id], (err, result) => {
-        if (err) return reject(err);
-        if (result.length === 0) return resolve(null);
-        resolve(result[0]);
-      });
-    });
+    const sqlSelect = "SELECT password FROM employee WHERE id = ?";
+    const [employeeResult] = await pool.query(sqlSelect, [id]);
+    if (employeeResult.length === 0) return res.status(404).json({ Status: false, Error: "Employee not found" });
 
-    if (!employee) {
-      return res.status(404).json({ Status: false, Error: "Employee not found" });
-    }
+    const match = await bcrypt.compare(currentPassword, employeeResult[0].password);
+    if (!match) return res.status(401).json({ Status: false, Error: "Current password is incorrect" });
 
-    // 2️⃣ Verify current password
-    const match = await bcrypt.compare(currentPassword, employee.password);
-    if (!match) {
-      return res.status(401).json({ Status: false, Error: "Current password is incorrect" });
-    }
-
-    // 3️⃣ Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-    // 4️⃣ Update password in DB
-    await new Promise((resolve, reject) => {
-      const sql = "UPDATE employee SET password = ? WHERE id = ?";
-      db.query(sql, [hashedPassword, id], (err, result) => {
-        if (err) return reject(err);
-        resolve(result);
-      });
-    });
+    const sqlUpdate = "UPDATE employee SET password = ? WHERE id = ?";
+    await pool.query(sqlUpdate, [hashedPassword, id]);
 
     return res.json({ Status: true, Message: "Password updated successfully" });
-  } catch (error) {
-    console.error("❌ Change password error:", error);
+  } catch (err) {
+    console.error("Error changing password:", err.message);
     return res.status(500).json({ Status: false, Error: "Server error" });
   }
 };
