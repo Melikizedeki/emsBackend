@@ -1,61 +1,57 @@
-import db from "../configs/db.js";
+// controllers/reportsController.js
+import pool from "../configs/db.js"; // mysql2/promise
 
 // ===================== PERFORMANCE REPORT =====================
-export const getPerformanceReport = (req, res) => {
-  const { year, month, period, holidays } = req.query;
-  const holidayList = holidays ? holidays.split(",").map(h => h.trim()) : [];
+export const getPerformanceReport = async (req, res) => {
+  try {
+    const { year, month, period, holidays } = req.query;
+    const holidayList = holidays ? holidays.split(",").map(h => h.trim()) : [];
 
-  if (!year) return res.status(400).json({ error: "Year is required" });
+    if (!year) return res.status(400).json({ error: "Year is required" });
 
-  let startDate, endDate;
+    let startDate, endDate;
 
-  // === Determine reporting period ===
-  if (period === "first") {
-    startDate = `${year}-01-01`;
-    endDate = `${year}-06-30`;
-  } else if (period === "second") {
-    startDate = `${year}-07-01`;
-    endDate = `${year}-12-31`;
-  } else if (period === "month" && month) {
-    const m = month.toString().padStart(2, "0");
-    startDate = `${year}-${m}-01`;
-    const lastDay = new Date(year, month, 0).getDate();
-    endDate = `${year}-${m}-${lastDay}`;
-  } else {
-    startDate = `${year}-01-01`;
-    endDate = `${year}-12-31`;
-  }
+    // === Determine reporting period ===
+    if (period === "first") {
+      startDate = `${year}-01-01`;
+      endDate = `${year}-06-30`;
+    } else if (period === "second") {
+      startDate = `${year}-07-01`;
+      endDate = `${year}-12-31`;
+    } else if (period === "month" && month) {
+      const m = month.toString().padStart(2, "0");
+      startDate = `${year}-${m}-01`;
+      const lastDay = new Date(year, month, 0).getDate();
+      endDate = `${year}-${m}-${lastDay}`;
+    } else {
+      startDate = `${year}-01-01`;
+      endDate = `${year}-12-31`;
+    }
 
-  // === Fetch employees & attendance records ===
-  const query = `
-    SELECT 
-      e.id AS emp_id,
-      e.employee_id,
-      e.name,
-      e.role,  -- ADDED
-      DATE_FORMAT(a.date, '%Y-%m-%d') AS date,
-      a.status,
-      TIME_FORMAT(a.check_in_time, '%H:%i:%s') AS check_in_time
-    FROM employee e
-    LEFT JOIN attendance a 
-      ON e.id = a.numerical_id 
-      AND a.date BETWEEN ? AND ?
-    ORDER BY e.name ASC;
-  `;
+    // === Fetch employees & attendance records ===
+    const sql = `
+      SELECT 
+        e.id AS emp_id,
+        e.employee_id,
+        e.name,
+        e.role,
+        DATE_FORMAT(a.date, '%Y-%m-%d') AS date,
+        a.status,
+        TIME_FORMAT(a.check_in_time, '%H:%i:%s') AS check_in_time
+      FROM employee e
+      LEFT JOIN attendance a 
+        ON e.id = a.numerical_id 
+        AND a.date BETWEEN ? AND ?
+      ORDER BY e.name ASC;
+    `;
 
-  db.query(query, [startDate, endDate], (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
+    const [results] = await pool.query(sql, [startDate, endDate]);
 
     // === Group data by employee ===
     const grouped = {};
     results.forEach(r => {
       if (!grouped[r.employee_id])
-        grouped[r.employee_id] = { 
-          name: r.name, 
-          role: r.role,   // ADDED
-          records: {} 
-        };
-
+        grouped[r.employee_id] = { name: r.name, role: r.role, records: {} };
       if (r.date) grouped[r.employee_id].records[r.date] = r;
     });
 
@@ -84,12 +80,9 @@ export const getPerformanceReport = (req, res) => {
         const rec = recs[dateStr];
         if (rec) {
           const status = rec.status?.toLowerCase();
-
-          // === Attendance weighting ===
           if (status === "present") attendancePoints += 1;
           else if (status === "late") attendancePoints += 0.5;
 
-          // === Punctuality calculation ===
           if (rec.check_in_time && (status === "present" || status === "late")) {
             const [h, m, s] = rec.check_in_time.split(":").map(Number);
             const seconds = h * 3600 + m * 60 + s;
@@ -108,11 +101,9 @@ export const getPerformanceReport = (req, res) => {
       const attendanceRate = totalWorkingDays
         ? Math.round((attendancePoints / totalWorkingDays) * 100)
         : 0;
-
       const punctualityRate = totalWorkingDays
         ? Math.round(punctualityPoints / totalWorkingDays)
         : 0;
-
       const performance = Math.round((attendanceRate + punctualityRate) / 2);
 
       let remarks = "";
@@ -124,7 +115,7 @@ export const getPerformanceReport = (req, res) => {
       return {
         employee_id: empId,
         name: emp.name,
-        role: emp.role,  // ADDED
+        role: emp.role,
         attendance_rate: attendanceRate,
         punctuality_rate: punctualityRate,
         performance,
@@ -133,35 +124,41 @@ export const getPerformanceReport = (req, res) => {
     });
 
     res.json(data);
-  });
+  } catch (err) {
+    console.error("❌ Error generating performance report:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 // ===================== PAYROLL REPORT =====================
-export const getPayrollReport = (req, res) => {
-  const { year, month } = req.query;
-  let filter = "";
+export const getPayrollReport = async (req, res) => {
+  try {
+    const { year, month } = req.query;
+    let filter = "";
 
-  if (year && month)
-    filter = `WHERE p.month = '${year}-${month.toString().padStart(2,"0")}'`;
-  else if (year)
-    filter = `WHERE p.month LIKE '${year}-%'`;
+    if (year && month)
+      filter = `WHERE p.month = '${year}-${month.toString().padStart(2,"0")}'`;
+    else if (year)
+      filter = `WHERE p.month LIKE '${year}-%'`;
 
-  const query = `
-    SELECT 
-      e.employee_id, 
-      e.name,
-      e.role,      -- ADDED
-      p.month, 
-      p.salary, 
-      p.net_salary
-    FROM payrolls p
-    LEFT JOIN employee e ON p.numerical_id = e.id
-    ${filter}
-    ORDER BY p.month DESC;
-  `;
+    const sql = `
+      SELECT 
+        e.employee_id, 
+        e.name,
+        e.role,
+        p.month, 
+        p.salary, 
+        p.net_salary
+      FROM payrolls p
+      LEFT JOIN employee e ON p.numerical_id = e.id
+      ${filter}
+      ORDER BY p.month DESC;
+    `;
 
-  db.query(query, (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
+    const [results] = await pool.query(sql);
     res.json(results);
-  });
+  } catch (err) {
+    console.error("❌ Error generating payroll report:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 };
