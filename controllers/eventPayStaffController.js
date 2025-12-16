@@ -1,5 +1,5 @@
 // controllers/staffEventsController.js
-import pool from "../configs/db.js"; // make sure pool is mysql2/promise
+import pool from "../configs/db.js"; // mysql2/promise pool
 
 // ================================
 // Get all events with payment status for a specific staff member
@@ -34,10 +34,12 @@ export const getStaffEvents = async (req, res) => {
       ORDER BY e.start_date DESC
     `;
 
+    // ✅ Using mysql2/promise
     const [results] = await pool.query(sql, [employeeId]);
+
     return res.json({ success: true, events: results });
   } catch (err) {
-    console.error("Error fetching staff events:", err.message);
+    console.error("❌ Error fetching staff events:", err.message);
     return res.status(500).json({ success: false, message: "Database error" });
   }
 };
