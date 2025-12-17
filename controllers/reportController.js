@@ -1,109 +1,172 @@
-import pool from "../configs/db.js";
+// controllers/reportsController.js
+import pool from "../configs/db.js"; // mysql2/promise
 
-// ================= PERFORMANCE =================
+// ===================== HELPER FUNCTIONS =====================
+const getAttendanceScore = (status) => {
+  if (!status) return 0;
+  status = status.toLowerCase();
+  if (status === "present") return 100;
+  if (status === "late") return 50;
+  return 0; // absent or others
+};
+
+const getPunctualityScore = (checkInTime) => {
+  if (!checkInTime) return 0;
+
+  const [h, m, s] = checkInTime.split(":").map(Number);
+  const seconds = h * 3600 + m * 60 + s;
+
+  const start = 7 * 3600; // 07:00
+  const end = 8 * 3600;   // 08:00
+
+  if (seconds <= start) return 100;
+  if (seconds >= end) return 0;
+
+  return Math.round(((end - seconds) / (end - start)) * 100);
+};
+
+// ===================== PERFORMANCE REPORT =====================
 export const getPerformanceReport = async (req, res) => {
   try {
-    const { year, month, period, date, holidays } = req.query;
+    const { year, month, period, holidays } = req.query;
     const holidayList = holidays ? holidays.split(",").map(h => h.trim()) : [];
 
-    let startDate, endDate;
+    if (!year) return res.status(400).json({ error: "Year is required" });
 
-    // ✅ DAILY
-    if (date) {
-      startDate = date;
-      endDate = date;
-    }
-    // MONTHLY
-    else if (period === "month" && month) {
+    // === Determine reporting period ===
+    let startDate, endDate;
+    if (period === "first") {
+      startDate = `${year}-01-01`;
+      endDate = `${year}-06-30`;
+    } else if (period === "second") {
+      startDate = `${year}-07-01`;
+      endDate = `${year}-12-31`;
+    } else if (period === "month" && month) {
       const m = month.toString().padStart(2, "0");
       startDate = `${year}-${m}-01`;
-      endDate = `${year}-${m}-${new Date(year, month, 0).getDate()}`;
-    }
-    // FULL YEAR
-    else {
+      const lastDay = new Date(year, month, 0).getDate();
+      endDate = `${year}-${m}-${lastDay}`;
+    } else {
       startDate = `${year}-01-01`;
       endDate = `${year}-12-31`;
     }
 
+    // === Fetch employees & attendance ===
     const sql = `
       SELECT 
+        e.id AS emp_id,
         e.employee_id,
         e.name,
         e.role,
-        a.date,
+        DATE_FORMAT(a.date, '%Y-%m-%d') AS date,
         a.status,
-        a.check_in_time
+        TIME_FORMAT(a.check_in_time, '%H:%i:%s') AS check_in_time
       FROM employee e
       LEFT JOIN attendance a 
-        ON e.id = a.numerical_id
+        ON e.id = a.numerical_id 
         AND a.date BETWEEN ? AND ?
-      WHERE e.role IN ('staff','field')   -- ❌ NO ADMIN
-      ORDER BY e.name;
+      WHERE e.role IN ('staff', 'field')  -- exclude admin
+      ORDER BY e.name ASC;
     `;
+    const [results] = await pool.query(sql, [startDate, endDate]);
 
-    const [rows] = await pool.query(sql, [startDate, endDate]);
-
+    // === Group by employee ===
     const grouped = {};
-    rows.forEach(r => {
+    results.forEach(r => {
       if (!grouped[r.employee_id])
-        grouped[r.employee_id] = { ...r, records: [] };
-      grouped[r.employee_id].records.push(r);
+        grouped[r.employee_id] = { name: r.name, role: r.role, records: {} };
+      if (r.date) grouped[r.employee_id].records[r.date] = r;
     });
 
-    const data = Object.values(grouped).map(emp => {
-      let attendance = 0;
-      let punctuality = 0;
+    // === Generate working days (exclude Sundays & holidays) ===
+    const workingDays = [];
+    const d = new Date(startDate);
+    const end = new Date(endDate);
+    while (d <= end) {
+      const ds = d.toISOString().split("T")[0];
+      const day = d.getDay();
+      if (day !== 0 && !holidayList.includes(ds)) workingDays.push(ds);
+      d.setDate(d.getDate() + 1);
+    }
 
-      emp.records.forEach(r => {
-        if (r.status === "present") attendance += 1;
-        if (r.check_in_time <= "08:00:00") punctuality += 1;
+    if (Object.keys(grouped).length === 0) return res.json([]);
+
+    // === Calculate performance ===
+    const data = Object.keys(grouped).map(empId => {
+      const emp = grouped[empId];
+      const recs = emp.records;
+
+      let attendanceTotal = 0;
+      let punctualityTotal = 0;
+      let daysCount = 0;
+
+      workingDays.forEach(dateStr => {
+        const rec = recs[dateStr];
+        const attendanceScore = rec ? getAttendanceScore(rec.status) : 0;
+        const punctualityScore = rec ? getPunctualityScore(rec.check_in_time) : 0;
+
+        attendanceTotal += attendanceScore;
+        punctualityTotal += punctualityScore;
+        daysCount++;
       });
 
-      const days = emp.records.length || 1;
-      const attendance_rate = Math.round((attendance / days) * 100);
-      const punctuality_rate = Math.round((punctuality / days) * 100);
-      const performance = Math.round((attendance_rate + punctuality_rate) / 2);
+      const attendanceRate = daysCount ? Math.round(attendanceTotal / daysCount) : 0;
+      const punctualityRate = daysCount ? Math.round(punctualityTotal / daysCount) : 0;
+      const performance = Math.round((attendanceRate + punctualityRate) / 2);
+
+      let remarks = "";
+      if (performance >= 90) remarks = "Excellent";
+      else if (performance >= 75) remarks = "Good";
+      else if (performance >= 60) remarks = "Average";
+      else remarks = "Needs Improvement";
 
       return {
-        employee_id: emp.employee_id,
+        employee_id: empId,
         name: emp.name,
         role: emp.role,
-        attendance_rate,
-        punctuality_rate,
+        attendance_rate: attendanceRate,
+        punctuality_rate: punctualityRate,
         performance,
-        remarks:
-          performance >= 90 ? "Excellent" :
-          performance >= 75 ? "Good" :
-          performance >= 60 ? "Average" :
-          "Needs Improvement",
+        remarks,
       };
     });
 
     res.json(data);
   } catch (err) {
+    console.error("❌ Error generating performance report:", err.message);
     res.status(500).json({ error: err.message });
   }
 };
 
-// ================= PAYROLL (UNTOUCHED) =================
+// ===================== PAYROLL REPORT =====================
 export const getPayrollReport = async (req, res) => {
   try {
     const { year, month } = req.query;
     let filter = "";
 
     if (year && month)
-      filter = `WHERE p.month='${year}-${month.toString().padStart(2,"0")}'`;
+      filter = `WHERE p.month = '${year}-${month.toString().padStart(2,"0")}'`;
+    else if (year)
+      filter = `WHERE p.month LIKE '${year}-%'`;
 
     const sql = `
-      SELECT e.employee_id, e.name, p.month, p.salary, p.net_salary
+      SELECT 
+        e.employee_id, 
+        e.name,
+        e.role,
+        p.month, 
+        p.salary, 
+        p.net_salary
       FROM payrolls p
-      LEFT JOIN employee e ON p.numerical_id=e.id
+      LEFT JOIN employee e ON p.numerical_id = e.id
       ${filter}
+      ORDER BY p.month DESC;
     `;
 
-    const [rows] = await pool.query(sql);
-    res.json(rows);
+    const [results] = await pool.query(sql);
+    res.json(results);
   } catch (err) {
+    console.error("❌ Error generating payroll report:", err.message);
     res.status(500).json({ error: err.message });
   }
 };
