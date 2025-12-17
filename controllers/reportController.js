@@ -7,7 +7,7 @@ const getAttendanceScore = (status) => {
   status = status.toLowerCase();
   if (status === "present") return 100;
   if (status === "late") return 50;
-  return 0; // absent or others
+  return 0; // absent or other statuses
 };
 
 const getPunctualityScore = (checkInTime) => {
@@ -28,14 +28,18 @@ const getPunctualityScore = (checkInTime) => {
 // ===================== PERFORMANCE REPORT =====================
 export const getPerformanceReport = async (req, res) => {
   try {
-    const { year, month, period, holidays } = req.query;
+    const { year, month, period, date, holidays } = req.query;
     const holidayList = holidays ? holidays.split(",").map(h => h.trim()) : [];
 
     if (!year) return res.status(400).json({ error: "Year is required" });
 
     // === Determine reporting period ===
     let startDate, endDate;
-    if (period === "first") {
+    if (date) {
+      // Daily report
+      startDate = date;
+      endDate = date;
+    } else if (period === "first") {
       startDate = `${year}-01-01`;
       endDate = `${year}-06-30`;
     } else if (period === "second") {
@@ -47,6 +51,7 @@ export const getPerformanceReport = async (req, res) => {
       const lastDay = new Date(year, month, 0).getDate();
       endDate = `${year}-${m}-${lastDay}`;
     } else {
+      // Full year
       startDate = `${year}-01-01`;
       endDate = `${year}-12-31`;
     }
@@ -70,7 +75,7 @@ export const getPerformanceReport = async (req, res) => {
     `;
     const [results] = await pool.query(sql, [startDate, endDate]);
 
-    // === Group by employee ===
+    // === Group records by employee ===
     const grouped = {};
     results.forEach(r => {
       if (!grouped[r.employee_id])
@@ -80,18 +85,23 @@ export const getPerformanceReport = async (req, res) => {
 
     // === Generate working days (exclude Sundays & holidays) ===
     const workingDays = [];
-    const d = new Date(startDate);
-    const end = new Date(endDate);
-    while (d <= end) {
-      const ds = d.toISOString().split("T")[0];
-      const day = d.getDay();
-      if (day !== 0 && !holidayList.includes(ds)) workingDays.push(ds);
-      d.setDate(d.getDate() + 1);
+    if (date) {
+      // Daily report
+      workingDays.push(date);
+    } else {
+      const d = new Date(startDate);
+      const endD = new Date(endDate);
+      while (d <= endD) {
+        const ds = d.toISOString().split("T")[0];
+        const day = d.getDay();
+        if (day !== 0 && !holidayList.includes(ds)) workingDays.push(ds);
+        d.setDate(d.getDate() + 1);
+      }
     }
 
     if (Object.keys(grouped).length === 0) return res.json([]);
 
-    // === Calculate performance ===
+    // === Calculate performance for each employee ===
     const data = Object.keys(grouped).map(empId => {
       const emp = grouped[empId];
       const recs = emp.records;
@@ -128,6 +138,7 @@ export const getPerformanceReport = async (req, res) => {
         punctuality_rate: punctualityRate,
         performance,
         remarks,
+        records: recs, // include daily records
       };
     });
 
