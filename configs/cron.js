@@ -79,7 +79,7 @@ cron.schedule("0 15 * * 6", async () => {
 // ======================================================
 // 🕘 09:20 — FINALIZE PREVIOUS BUSINESS DAY
 // ======================================================
-cron.schedule("35 9 * * *", async () => {
+cron.schedule("38 9 * * *", async () => {
   try {
     const businessDate = new Date(Date.now() - 86400000)
       .toISOString()
