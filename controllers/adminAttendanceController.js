@@ -14,7 +14,7 @@ const getCurrentTime = () =>
   new Date().toTimeString().slice(0, 8);
 
 // ======================================================
-// 1️⃣ INITIALIZE DAILY ATTENDANCE (ADMIN / MANUAL)
+// 1️⃣ INITIALIZE DAILY ATTENDANCE (EXCLUDE ADMINS)
 // ======================================================
 export const initializeDailyAttendance = async (req, res) => {
   try {
@@ -22,17 +22,18 @@ export const initializeDailyAttendance = async (req, res) => {
 
     const sql = `
       INSERT INTO attendance (numerical_id, date, status)
-      SELECT id, ?, 'pending'
-      FROM employee
-      WHERE id NOT IN (
-        SELECT numerical_id FROM attendance WHERE date = ?
-      )
+      SELECT e.id, ?, 'pending'
+      FROM employee e
+      WHERE e.role <> 'admin'
+        AND e.id NOT IN (
+          SELECT numerical_id FROM attendance WHERE date = ?
+        )
     `;
 
     const [result] = await pool.query(sql, [today, today]);
 
     res.json({
-      message: "✅ Daily attendance initialized",
+      message: "✅ Daily attendance initialized (admins excluded)",
       inserted: result.affectedRows
     });
   } catch (err) {
@@ -42,7 +43,7 @@ export const initializeDailyAttendance = async (req, res) => {
 };
 
 // ======================================================
-// 2️⃣ CHECK-IN (STRICT TIME RULES)
+// 2️⃣ CHECK-IN (ADMINS BLOCKED)
 // ======================================================
 export const checkIn = async (req, res) => {
   try {
@@ -50,24 +51,35 @@ export const checkIn = async (req, res) => {
     const time = getCurrentTime();
     const date = getTodayDate();
 
+    // 🔒 Block admin
+    const [emp] = await pool.query(
+      `SELECT role FROM employee WHERE id = ?`,
+      [employee_id]
+    );
+
+    if (!emp.length || emp[0].role === "admin") {
+      return res.status(403).json({
+        message: "❌ Admins are not allowed to check in"
+      });
+    }
+
     let status = null;
 
-    // Day check-in
+    // Day shift
     if (time >= "07:30:00" && time <= "08:00:00") status = "present";
     else if (time >= "08:01:00" && time <= "09:00:00") status = "late";
 
-    // Night check-in
+    // Night shift
     else if (time >= "19:30:00" && time <= "20:00:00") status = "present";
     else if (time >= "20:01:00" && time <= "21:00:00") status = "late";
 
-    // Outside allowed windows
     if (!status) {
       return res.status(403).json({
         message: "❌ Check-in not allowed at this time"
       });
     }
 
-    // Prevent more than 2 check-ins
+    // Prevent double check-in
     const [existing] = await pool.query(
       `SELECT check_in_time FROM attendance
        WHERE numerical_id=? AND date=? AND check_in_time IS NOT NULL`,
@@ -76,24 +88,21 @@ export const checkIn = async (req, res) => {
 
     if (existing.length > 0) {
       return res.status(409).json({
-        message: "❌ Check-in already recorded for today"
+        message: "❌ Check-in already recorded"
       });
     }
 
-    // Update attendance
-    const sql = `
-      UPDATE attendance
-      SET check_in_time=?, status=?
-      WHERE numerical_id=? AND date=?
-    `;
-
-    await pool.query(sql, [time, status, employee_id, date]);
+    await pool.query(
+      `UPDATE attendance
+       SET check_in_time=?, status=?
+       WHERE numerical_id=? AND date=?`,
+      [time, status, employee_id, date]
+    );
 
     res.json({
       message: "✅ Check-in successful",
       status
     });
-
   } catch (err) {
     console.error("Check-in error:", err.message);
     res.status(500).json({ error: err.message });
@@ -101,29 +110,38 @@ export const checkIn = async (req, res) => {
 };
 
 // ======================================================
-// 3️⃣ CHECK-OUT
+// 3️⃣ CHECK-OUT (ADMINS BLOCKED)
 // ======================================================
 export const checkOut = async (req, res) => {
   try {
     const { employee_id } = req.body;
     const time = getCurrentTime();
 
+    const [emp] = await pool.query(
+      `SELECT role FROM employee WHERE id = ?`,
+      [employee_id]
+    );
+
+    if (!emp.length || emp[0].role === "admin") {
+      return res.status(403).json({
+        message: "❌ Admins are not allowed to check out"
+      });
+    }
+
     let date = getTodayDate();
 
-    // Early morning checkout belongs to yesterday
     if (time >= "06:00:00" && time <= "07:55:00") {
       date = getYesterdayDate();
     }
 
-    const sql = `
-      UPDATE attendance
-      SET check_out_time=?
-      WHERE numerical_id=? AND date=?
-        AND check_in_time IS NOT NULL
-        AND check_out_time IS NULL
-    `;
-
-    const [result] = await pool.query(sql, [time, employee_id, date]);
+    const [result] = await pool.query(
+      `UPDATE attendance
+       SET check_out_time=?
+       WHERE numerical_id=? AND date=?
+         AND check_in_time IS NOT NULL
+         AND check_out_time IS NULL`,
+      [time, employee_id, date]
+    );
 
     if (result.affectedRows === 0) {
       return res.status(404).json({
@@ -131,10 +149,7 @@ export const checkOut = async (req, res) => {
       });
     }
 
-    res.json({
-      message: "✅ Check-out successful"
-    });
-
+    res.json({ message: "✅ Check-out successful" });
   } catch (err) {
     console.error("Check-out error:", err.message);
     res.status(500).json({ error: err.message });
@@ -142,7 +157,7 @@ export const checkOut = async (req, res) => {
 };
 
 // ======================================================
-// 4️⃣ FETCH ATTENDANCE BY DATE (ADMIN)
+// 4️⃣ FETCH ATTENDANCE BY DATE (ADMINS EXCLUDED)
 // ======================================================
 export const getAttendanceByDate = async (req, res) => {
   try {
@@ -156,16 +171,16 @@ export const getAttendanceByDate = async (req, res) => {
         a.date,
         a.check_in_time,
         a.check_out_time,
-        a.status
+        COALESCE(a.status, 'absent') AS status
       FROM employee e
       LEFT JOIN attendance a
         ON e.id = a.numerical_id AND a.date = ?
+      WHERE e.role <> 'admin'
       ORDER BY e.name ASC
     `;
 
     const [rows] = await pool.query(sql, [date]);
     res.json(rows);
-
   } catch (err) {
     console.error("Fetch error:", err.message);
     res.status(500).json({ error: err.message });
@@ -173,22 +188,26 @@ export const getAttendanceByDate = async (req, res) => {
 };
 
 // ======================================================
-// 5️⃣ ATTENDANCE SUMMARY (ADMIN)
+// 5️⃣ ATTENDANCE SUMMARY (CARD COUNTS – ALWAYS CORRECT)
 // ======================================================
 export const getAttendanceSummary = async (req, res) => {
   try {
     const { date } = req.params;
 
     const sql = `
-      SELECT status, COUNT(*) AS total
-      FROM attendance
-      WHERE date = ?
-      GROUP BY status
+      SELECT 
+        SUM(CASE WHEN a.status = 'present' THEN 1 ELSE 0 END) AS present,
+        SUM(CASE WHEN a.status = 'late' THEN 1 ELSE 0 END) AS late,
+        SUM(CASE WHEN a.status = 'absent' THEN 1 ELSE 0 END) AS absent
+      FROM employee e
+      LEFT JOIN attendance a
+        ON e.id = a.numerical_id AND a.date = ?
+      WHERE e.role <> 'admin'
     `;
 
-    const [rows] = await pool.query(sql, [date]);
-    res.json(rows);
+    const [[summary]] = await pool.query(sql, [date]);
 
+    res.json(summary);
   } catch (err) {
     console.error("Summary error:", err.message);
     res.status(500).json({ error: err.message });
