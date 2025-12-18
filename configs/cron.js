@@ -75,35 +75,64 @@ cron.schedule("0 15 * * 6", async () => {
 }, { timezone: TZ });
 
 
+
 // ======================================================
-// 🕗 08:00 — FINALIZE PREVIOUS DAY REPORT ⭐⭐⭐
+// 🕘 09:20 — FINALIZE PREVIOUS BUSINESS DAY
 // ======================================================
-cron.schedule("20 9 * * *", async () => {
+cron.schedule("29 9 * * *", async () => {
   try {
     const businessDate = new Date(Date.now() - 86400000)
       .toISOString()
       .split("T")[0];
 
-    // pending → absent
+    // --------------------------------------------------
+    // 1️⃣ PENDING → ABSENT (AUTO-FILL 00:00)
+    // --------------------------------------------------
     await pool.query(`
-      UPDATE attendance
-      SET status='absent',
-          check_in_time='00:00:00',
-          check_out_time='00:00:00'
-      WHERE date=? AND status='pending'
+      UPDATE attendance a
+      JOIN employee e ON a.numerical_id = e.id
+      SET 
+        a.status = 'absent',
+        a.check_in_time = '00:00:00',
+        a.check_out_time = '00:00:00'
+      WHERE a.date = ?
+        AND a.status = 'pending'
+        AND e.role <> 'admin'
     `, [businessDate]);
 
-    // checked-in but no checkout → late
+    // --------------------------------------------------
+    // 2️⃣ ALREADY ABSENT → AUTO-FILL ONLY (DO NOT CHANGE STATUS)
+    // --------------------------------------------------
     await pool.query(`
-      UPDATE attendance
-      SET status='late', check_out_time='00:00:00'
-      WHERE date=?
-        AND check_in_time IS NOT NULL
-        AND check_out_time IS NULL
+      UPDATE attendance a
+      JOIN employee e ON a.numerical_id = e.id
+      SET 
+        a.check_in_time = '00:00:00',
+        a.check_out_time = '00:00:00'
+      WHERE a.date = ?
+        AND a.status = 'absent'
+        AND (a.check_in_time IS NULL OR a.check_out_time IS NULL)
+        AND e.role <> 'admin'
     `, [businessDate]);
 
-    console.log("✅ Attendance finalized:", businessDate);
+    // --------------------------------------------------
+    // 3️⃣ CHECKED-IN BUT NO CHECKOUT → LATE
+    // --------------------------------------------------
+    await pool.query(`
+      UPDATE attendance a
+      JOIN employee e ON a.numerical_id = e.id
+      SET 
+        a.status = 'late',
+        a.check_out_time = '00:00:00'
+      WHERE a.date = ?
+        AND a.check_in_time IS NOT NULL
+        AND a.check_out_time IS NULL
+        AND a.status IN ('present', 'pending')
+        AND e.role <> 'admin'
+    `, [businessDate]);
+
+    console.log("✅ Attendance finalized safely:", businessDate);
   } catch (err) {
-    console.error("[08:00] Finalize failed:", err.message);
+    console.error("[09:20] Attendance finalize failed:", err.message);
   }
 }, { timezone: TZ });
