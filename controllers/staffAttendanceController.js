@@ -1,5 +1,5 @@
 import pool from "../configs/db.js";
-import { getDarTime } from "../utils/tz.js"; // reliable Tanzania time
+
 
 const GEOFENCE_CENTER = { lat: -3.69019, lng: 33.41387 };
 const GEOFENCE_RADIUS = 100; // meters
