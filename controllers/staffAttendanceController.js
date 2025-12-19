@@ -1,5 +1,5 @@
-// controllers/attendanceController.js
 import pool from "../configs/db.js";
+import { getDarTime } from "../utils/tz.js"; // reliable Tanzania time
 
 const GEOFENCE_CENTER = { lat: -3.69019, lng: 33.41387 };
 const GEOFENCE_RADIUS = 100; // meters
@@ -15,16 +15,6 @@ const haversineDistance = (lat1, lon1, lat2, lon2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-const getTzDateTime = () => {
-  const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const local = new Date(utc + 3 * 3600000);
-  return {
-    date: local.toISOString().split("T")[0],
-    time: local.toTimeString().split(" ")[0],
-  };
-};
-
 // ================= CHECK-IN =================
 export const checkIn = async (req, res) => {
   try {
@@ -36,15 +26,15 @@ export const checkIn = async (req, res) => {
     if (distance > GEOFENCE_RADIUS)
       return res.status(400).json({ message: "Outside company area" });
 
-    const { date, time } = getTzDateTime();
-    let status = "pending";
+    const { date, time } = getDarTime();
 
-    if (time >= "07:00:00" && time <= "07:59:59") status = "present";
-    else if (time >= "08:00:00" && time <= "08:59:59") status = "late";
-    else if (time >= "09:00:00" && time <= "17:59:59") status = "absent";
-    else if (time >= "19:30:00" && time <= "19:59:59") status = "present";
-    else if (time >= "20:00:00" && time <= "20:59:59") status = "late";
-    else if (time >= "21:00:00" || time <= "05:59:59") status = "absent";
+    // ===== Determine status based on time =====
+    let status = "pending"; // default
+    if (time >= "07:30:00" && time <= "08:00:00") status = "present";
+    else if (time >= "08:01:00" && time <= "09:00:00") status = "late";
+    else if (time >= "19:30:00" && time <= "20:00:00") status = "present";
+    else if (time >= "20:01:00" && time <= "21:00:00") status = "late";
+    else status = "absent"; // all other times
 
     const [rows] = await pool.query(
       "SELECT * FROM attendance WHERE numerical_id=? AND date=?",
@@ -52,7 +42,7 @@ export const checkIn = async (req, res) => {
     );
 
     if (rows.length > 0 && rows[0].check_in_time)
-      return res.status(400).json({ message: "Check-in already done today" });
+      return res.status(409).json({ message: "Check-in already done today" });
 
     if (rows.length > 0) {
       await pool.query(
@@ -84,17 +74,16 @@ export const checkOut = async (req, res) => {
     if (distance > GEOFENCE_RADIUS)
       return res.status(400).json({ message: "Outside company area" });
 
-    const { date, time } = getTzDateTime();
+    const { date, time, day } = getDarTime();
     let attendanceDate = date;
 
-    const local = new Date();
-    local.setTime(local.getTime() + 3 * 3600000); // UTC+3
+    // ===== Determine shift logic like admin cron =====
     const isDayCheckout = time >= "18:00:00" && time <= "18:59:59";
     const isNightCheckout = time >= "06:00:00" && time <= "06:59:59";
-    const isSatCheckout = time >= "15:00:00" && time <= "15:59:59" && local.getDay() === 6;
+    const isSatCheckout = day === 6 && time >= "15:00:00" && time <= "15:59:59";
 
     if (isNightCheckout) {
-      const y = new Date(local);
+      const y = new Date();
       y.setDate(y.getDate() - 1);
       attendanceDate = y.toISOString().split("T")[0];
     }
@@ -118,21 +107,6 @@ export const checkOut = async (req, res) => {
     res.json({ message: "Check-out successful", time });
   } catch (err) {
     console.error("Check-out error:", err);
-    res.status(500).json({ message: "Server error" });
-  }
-};
-
-// ================= GET ATTENDANCE =================
-export const getAttendanceByEmployee = async (req, res) => {
-  try {
-    const { numerical_id } = req.params;
-    const [rows] = await pool.query(
-      "SELECT date, check_in_time, check_out_time, status FROM attendance WHERE numerical_id=? ORDER BY date DESC",
-      [numerical_id]
-    );
-    res.json(rows);
-  } catch (err) {
-    console.error("Get attendance error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
