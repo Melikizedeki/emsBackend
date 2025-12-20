@@ -77,7 +77,7 @@ export const checkIn = async (req, res) => {
 };
 
 /* ======================================================
-   ✅ CHECK-OUT (STAFF & FIELD, SATURDAY 12:30 RULE)
+   ✅ CHECK-OUT (STAFF & FIELD, SATURDAY SAFE)
 ====================================================== */
 export const checkOut = async (req, res) => {
   try {
@@ -99,9 +99,11 @@ export const checkOut = async (req, res) => {
     const yesterday = getYesterdayDate();
     const dayOfWeek = getDayOfWeek();
 
+    // Fetch role first
     const [roleRow] = await pool.query(`SELECT role FROM employee WHERE id=?`, [numerical_id]);
     const role = roleRow.length ? roleRow[0].role : null;
 
+    // Fetch attendance
     const [todayRow] = await pool.query(
       `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
       [numerical_id, today]
@@ -113,15 +115,17 @@ export const checkOut = async (req, res) => {
 
     let date = today;
 
-    // ---------- SATURDAY STAFF CHECKOUT ----------
-    if (dayOfWeek === 6 && role === "staff" && todayRow.length && todayRow[0].check_in_time) {
-      if (time < "12:30:00") {
-        return res.status(403).json({
-          message: "❌ Staff can checkout only after 12:30 on Saturday",
-        });
-      }
-      date = today;
-    } 
+  
+       // ---------- SATURDAY STAFF CHECKOUT (TEST: 12:30) ----------
+if (dayOfWeek === 6 && role === "staff" && todayRow.length && todayRow[0].check_in_time) {
+  if (time < "12:30:00") {  // changed from 15:00 to 12:30 for testing
+    return res.status(403).json({
+      message: "❌ Staff can checkout only after 12:30 on Saturday (test)",
+    });
+  }
+  date = today;
+}
+
     // ---------- DAY SHIFT ----------
     else if (todayRow.length && todayRow[0].check_in_time) {
       const checkInTime = todayRow[0].check_in_time;
@@ -131,7 +135,7 @@ export const checkOut = async (req, res) => {
             message: "❌ Day shift can only checkout between 18:00–18:59",
           });
         }
-      } 
+      }
       // ---------- NIGHT SHIFT ----------
       else if (checkInTime >= "19:30:00" && checkInTime <= "21:00:00") {
         if (!(time >= "06:00:00" && time <= "07:55:00")) {
@@ -153,7 +157,8 @@ export const checkOut = async (req, res) => {
       time <= "07:55:00"
     ) {
       date = yesterday;
-    } else return res.status(404).json({ message: "❌ No active shift found" });
+    }
+    else return res.status(404).json({ message: "❌ No active shift found" });
 
     const [result] = await pool.query(
       `UPDATE attendance
