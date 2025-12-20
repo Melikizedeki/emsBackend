@@ -1,6 +1,9 @@
+// controllers/staffAttendanceController.js
 import pool from "../configs/db.js";
 
-
+// ======================================================
+// 📍 GEOFENCE
+// ======================================================
 const GEOFENCE_CENTER = { lat: -3.69019, lng: 33.41387 };
 const GEOFENCE_RADIUS = 100; // meters
 
@@ -11,114 +14,175 @@ const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const dLon = toRad(lon2 - lon1);
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-// ================= CHECK-IN =================
+// ======================================================
+// 🕒 TIME HELPERS (SAME LOGIC AS ADMIN)
+// ======================================================
+const getTodayDate = () =>
+  new Date().toISOString().split("T")[0];
+
+const getYesterdayDate = () =>
+  new Date(Date.now() - 86400000).toISOString().split("T")[0];
+
+const getCurrentTime = () =>
+  new Date().toTimeString().slice(0, 8);
+
+// ======================================================
+// ✅ STAFF CHECK-IN (ADMIN-LIKE)
+// ======================================================
 export const checkIn = async (req, res) => {
   try {
     const { numerical_id, latitude, longitude } = req.body;
-    if (!latitude || !longitude)
+
+    if (!latitude || !longitude) {
       return res.status(400).json({ message: "Coordinates required" });
+    }
 
-    const distance = haversineDistance(latitude, longitude, GEOFENCE_CENTER.lat, GEOFENCE_CENTER.lng);
-    if (distance > GEOFENCE_RADIUS)
-      return res.status(400).json({ message: "Outside company area" });
+    // 📍 Geofence validation
+    const distance = haversineDistance(
+      latitude,
+      longitude,
+      GEOFENCE_CENTER.lat,
+      GEOFENCE_CENTER.lng
+    );
 
-    const { date, time } = getDarTime();
+    if (distance > GEOFENCE_RADIUS) {
+      return res.status(403).json({ message: "Outside company area" });
+    }
 
-    // ===== Determine status based on time =====
-    let status = "pending"; // default
+    const time = getCurrentTime();
+    const date = getTodayDate();
+
+    // ⏱ Determine status (EXACTLY LIKE ADMIN)
+    let status = null;
+
+    // Day shift
     if (time >= "07:30:00" && time <= "08:00:00") status = "present";
     else if (time >= "08:01:00" && time <= "09:00:00") status = "late";
+
+    // Night shift
     else if (time >= "19:30:00" && time <= "20:00:00") status = "present";
     else if (time >= "20:01:00" && time <= "21:00:00") status = "late";
-    else status = "absent"; // all other times
 
-    const [rows] = await pool.query(
-      "SELECT * FROM attendance WHERE numerical_id=? AND date=?",
+    // ❌ Block invalid times (IMPORTANT)
+    if (!status) {
+      return res.status(403).json({
+        message: "❌ Check-in not allowed at this time",
+      });
+    }
+
+    // ❌ Prevent double check-in
+    const [existing] = await pool.query(
+      `SELECT check_in_time
+       FROM attendance
+       WHERE numerical_id=? AND date=? AND check_in_time IS NOT NULL`,
       [numerical_id, date]
     );
 
-    if (rows.length > 0 && rows[0].check_in_time)
-      return res.status(409).json({ message: "Check-in already done today" });
-
-    if (rows.length > 0) {
-      await pool.query(
-        "UPDATE attendance SET check_in_time=?, status=? WHERE numerical_id=? AND date=?",
-        [time, status, numerical_id, date]
-      );
-    } else {
-      await pool.query(
-        "INSERT INTO attendance (numerical_id, date, check_in_time, status) VALUES (?, ?, ?, ?)",
-        [numerical_id, date, time, status]
-      );
+    if (existing.length > 0) {
+      return res.status(409).json({
+        message: "❌ Check-in already recorded",
+      });
     }
 
-    res.json({ message: `Check-in ${status}`, time });
+    // ✅ Update attendance (record already created by cron)
+    await pool.query(
+      `UPDATE attendance
+       SET check_in_time=?, status=?
+       WHERE numerical_id=? AND date=?`,
+      [time, status, numerical_id, date]
+    );
+
+    res.json({
+      message: "✅ Check-in successful",
+      status,
+      time,
+    });
   } catch (err) {
-    console.error("Check-in error:", err);
+    console.error("Staff check-in error:", err.message);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-// ================= CHECK-OUT =================
+// ======================================================
+// ✅ STAFF CHECK-OUT (ADMIN-LIKE)
+// ======================================================
 export const checkOut = async (req, res) => {
   try {
     const { numerical_id, latitude, longitude } = req.body;
-    if (!latitude || !longitude)
+
+    if (!latitude || !longitude) {
       return res.status(400).json({ message: "Coordinates required" });
-
-    const distance = haversineDistance(latitude, longitude, GEOFENCE_CENTER.lat, GEOFENCE_CENTER.lng);
-    if (distance > GEOFENCE_RADIUS)
-      return res.status(400).json({ message: "Outside company area" });
-
-    const { date, time, day } = getDarTime();
-    let attendanceDate = date;
-
-    // ===== Determine shift logic like admin cron =====
-    const isDayCheckout = time >= "18:00:00" && time <= "18:59:59";
-    const isNightCheckout = time >= "06:00:00" && time <= "07:55:59";
-    const isSatCheckout = day === 6 && time >= "15:00:00" && time <= "15:59:59";
-
-    if (isNightCheckout) {
-      const y = new Date();
-      y.setDate(y.getDate() - 1);
-      attendanceDate = y.toISOString().split("T")[0];
     }
 
-    if (!isDayCheckout && !isNightCheckout && !isSatCheckout)
-      return res.status(400).json({ message: "Check-out not allowed at this time" });
-
-    const [rows] = await pool.query(
-      "SELECT * FROM attendance WHERE numerical_id=? AND date=?",
-      [numerical_id, attendanceDate]
+    // 📍 Geofence validation
+    const distance = haversineDistance(
+      latitude,
+      longitude,
+      GEOFENCE_CENTER.lat,
+      GEOFENCE_CENTER.lng
     );
 
-    if (rows.length === 0 || !rows[0].check_in_time)
-      return res.status(400).json({ message: "You must check-in first" });
+    if (distance > GEOFENCE_RADIUS) {
+      return res.status(403).json({ message: "Outside company area" });
+    }
 
-    await pool.query(
-      "UPDATE attendance SET check_out_time=? WHERE numerical_id=? AND date=?",
-      [time, numerical_id, attendanceDate]
+    const time = getCurrentTime();
+    let date = getTodayDate();
+
+    // 🌙 Night shift checkout → yesterday
+    if (time >= "06:00:00" && time <= "07:55:00") {
+      date = getYesterdayDate();
+    }
+
+    const [result] = await pool.query(
+      `UPDATE attendance
+       SET check_out_time=?
+       WHERE numerical_id=? AND date=?
+         AND check_in_time IS NOT NULL
+         AND check_out_time IS NULL`,
+      [time, numerical_id, date]
     );
 
-    res.json({ message: "Check-out successful", time });
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        message: "❌ No active check-in found",
+      });
+    }
+
+    res.json({
+      message: "✅ Check-out successful",
+      time,
+    });
   } catch (err) {
-    console.error("Check-out error:", err);
+    console.error("Staff check-out error:", err.message);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-export const getAttendanceByEmployee = (req, res) => {
-  const { numerical_id } = req.params;
-  db.query(
-    "SELECT date, check_in_time, check_out_time, status FROM attendance WHERE numerical_id=? ORDER BY date DESC",
-    [numerical_id],
-    (err, rows) => {
-      if (err) return res.status(500).json({ message: "Server error" });
-      res.json(rows);
-    }
-  );
+// ======================================================
+// 📄 STAFF ATTENDANCE HISTORY
+// ======================================================
+export const getAttendanceByEmployee = async (req, res) => {
+  try {
+    const { numerical_id } = req.params;
+
+    const [rows] = await pool.query(
+      `SELECT date, check_in_time, check_out_time, status
+       FROM attendance
+       WHERE numerical_id=?
+       ORDER BY date DESC`,
+      [numerical_id]
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("Fetch attendance error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
 };
