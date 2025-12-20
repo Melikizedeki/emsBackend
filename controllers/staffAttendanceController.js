@@ -1,11 +1,10 @@
-// controllers/staffAttendanceController.js
 import pool from "../configs/db.js";
 
-// ======================================================
-// 📍 GEOFENCE
-// ======================================================
+/* ======================================================
+   📍 GEOFENCE
+====================================================== */
 const GEOFENCE_CENTER = { lat: -3.69019, lng: 33.41387 };
-const GEOFENCE_RADIUS = 100; // meters
+const GEOFENCE_RADIUS = 100;
 
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const toRad = (x) => (x * Math.PI) / 180;
@@ -20,9 +19,9 @@ const haversineDistance = (lat1, lon1, lat2, lon2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-// ======================================================
-// 🕒 TIME HELPERS (SAME LOGIC AS ADMIN)
-// ======================================================
+/* ======================================================
+   🕒 TIME HELPERS (TZ SAFE)
+====================================================== */
 const getTodayDate = () =>
   new Date().toISOString().split("T")[0];
 
@@ -32,18 +31,16 @@ const getYesterdayDate = () =>
 const getCurrentTime = () =>
   new Date().toTimeString().slice(0, 8);
 
-// ======================================================
-// ✅ STAFF CHECK-IN (ADMIN-LIKE)
-// ======================================================
+/* ======================================================
+   ✅ STAFF CHECK-IN
+====================================================== */
 export const checkIn = async (req, res) => {
   try {
     const { numerical_id, latitude, longitude } = req.body;
 
-    if (!latitude || !longitude) {
+    if (!latitude || !longitude)
       return res.status(400).json({ message: "Coordinates required" });
-    }
 
-    // 📍 Geofence validation
     const distance = haversineDistance(
       latitude,
       longitude,
@@ -51,46 +48,36 @@ export const checkIn = async (req, res) => {
       GEOFENCE_CENTER.lng
     );
 
-    if (distance > GEOFENCE_RADIUS) {
+    if (distance > GEOFENCE_RADIUS)
       return res.status(403).json({ message: "Outside company area" });
-    }
 
     const time = getCurrentTime();
     const date = getTodayDate();
 
-    // ⏱ Determine status (EXACTLY LIKE ADMIN)
     let status = null;
 
-    // Day shift
+    // 🌞 Day shift
     if (time >= "07:30:00" && time <= "08:00:00") status = "present";
     else if (time >= "08:01:00" && time <= "09:00:00") status = "late";
 
-    // Night shift
+    // 🌙 Night shift
     else if (time >= "19:30:00" && time <= "20:00:00") status = "present";
     else if (time >= "20:01:00" && time <= "21:00:00") status = "late";
 
-    // ❌ Block invalid times (IMPORTANT)
-    if (!status) {
+    if (!status)
       return res.status(403).json({
         message: "❌ Check-in not allowed at this time",
       });
-    }
 
-    // ❌ Prevent double check-in
-    const [existing] = await pool.query(
-      `SELECT check_in_time
-       FROM attendance
+    const [exists] = await pool.query(
+      `SELECT id FROM attendance
        WHERE numerical_id=? AND date=? AND check_in_time IS NOT NULL`,
       [numerical_id, date]
     );
 
-    if (existing.length > 0) {
-      return res.status(409).json({
-        message: "❌ Check-in already recorded",
-      });
-    }
+    if (exists.length)
+      return res.status(409).json({ message: "❌ Already checked in" });
 
-    // ✅ Update attendance (record already created by cron)
     await pool.query(
       `UPDATE attendance
        SET check_in_time=?, status=?
@@ -98,29 +85,23 @@ export const checkIn = async (req, res) => {
       [time, status, numerical_id, date]
     );
 
-    res.json({
-      message: "✅ Check-in successful",
-      status,
-      time,
-    });
+    res.json({ message: "✅ Check-in successful", status, time });
   } catch (err) {
-    console.error("Staff check-in error:", err.message);
+    console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-// ======================================================
-// ✅ STAFF CHECK-OUT (ADMIN-LIKE)
-// ======================================================
+/* ======================================================
+   ✅ STAFF CHECK-OUT (NIGHT SAFE)
+====================================================== */
 export const checkOut = async (req, res) => {
   try {
     const { numerical_id, latitude, longitude } = req.body;
 
-    if (!latitude || !longitude) {
+    if (!latitude || !longitude)
       return res.status(400).json({ message: "Coordinates required" });
-    }
 
-    // 📍 Geofence validation
     const distance = haversineDistance(
       latitude,
       longitude,
@@ -128,17 +109,17 @@ export const checkOut = async (req, res) => {
       GEOFENCE_CENTER.lng
     );
 
-    if (distance > GEOFENCE_RADIUS) {
+    if (distance > GEOFENCE_RADIUS)
       return res.status(403).json({ message: "Outside company area" });
-    }
 
     const time = getCurrentTime();
-    let date = getTodayDate();
 
-    // 🌙 Night shift checkout → yesterday
-    if (time >= "06:00:00" && time <= "07:55:00") {
-      date = getYesterdayDate();
-    }
+    // 🔑 KEY LOGIC
+    // Morning checkout belongs to YESTERDAY
+    const date =
+      time >= "06:00:00" && time <= "07:55:00"
+        ? getYesterdayDate()
+        : getTodayDate();
 
     const [result] = await pool.query(
       `UPDATE attendance
@@ -149,25 +130,19 @@ export const checkOut = async (req, res) => {
       [time, numerical_id, date]
     );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        message: "❌ No active check-in found",
-      });
-    }
+    if (!result.affectedRows)
+      return res.status(404).json({ message: "❌ No active shift found" });
 
-    res.json({
-      message: "✅ Check-out successful",
-      time,
-    });
+    res.json({ message: "✅ Check-out successful", time });
   } catch (err) {
-    console.error("Staff check-out error:", err.message);
+    console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-// ======================================================
-// 📄 STAFF ATTENDANCE HISTORY
-// ======================================================
+/* ======================================================
+   📄 ATTENDANCE HISTORY
+====================================================== */
 export const getAttendanceByEmployee = async (req, res) => {
   try {
     const { numerical_id } = req.params;
@@ -182,7 +157,6 @@ export const getAttendanceByEmployee = async (req, res) => {
 
     res.json(rows);
   } catch (err) {
-    console.error("Fetch attendance error:", err.message);
     res.status(500).json({ message: "Server error" });
   }
 };
