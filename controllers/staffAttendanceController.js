@@ -93,7 +93,7 @@ export const checkIn = async (req, res) => {
 };
 
 /* ======================================================
-   ✅ STAFF CHECK-OUT (NIGHT SAFE)
+   ✅ STAFF CHECK-OUT (SHIFT-AWARE WITHOUT SHIFT COLUMN)
 ====================================================== */
 export const checkOut = async (req, res) => {
   try {
@@ -113,27 +113,69 @@ export const checkOut = async (req, res) => {
       return res.status(403).json({ message: "Outside company area" });
 
     const time = getCurrentTime();
+    const today = getTodayDate();
+    const yesterday = getYesterdayDate();
 
-    // 🔑 KEY LOGIC
-    // Morning checkout belongs to YESTERDAY
-    const date =
+    // 🔑 Fetch today's and yesterday's attendance
+    const [todayRow] = await pool.query(
+      `SELECT check_in_time FROM attendance
+       WHERE numerical_id=? AND date=?`,
+      [numerical_id, today]
+    );
+
+    const [yesterdayRow] = await pool.query(
+      `SELECT check_in_time FROM attendance
+       WHERE numerical_id=? AND date=?`,
+      [numerical_id, yesterday]
+    );
+
+    let date = today;
+
+    if (todayRow.length && todayRow[0].check_in_time) {
+      const checkInTime = todayRow[0].check_in_time;
+      // Day shift check-in (07:30–09:00) → checkout today 18:00–18:59
+      if (checkInTime >= "07:30:00" && checkInTime <= "09:00:00") {
+        if (!(time >= "18:00:00" && time <= "18:59:59")) {
+          return res.status(403).json({
+            message: "❌ Day shift can only checkout between 18:00–18:59",
+          });
+        }
+      }
+      // Night shift check-in (19:30–21:00) → checkout next day 06:00–07:55
+      else if (checkInTime >= "19:30:00" && checkInTime <= "21:00:00") {
+        if (!(time >= "06:00:00" && time <= "07:55:00")) {
+          return res.status(403).json({
+            message: "❌ Night shift checkout allowed only next morning 06:00–07:55",
+          });
+        }
+        date = yesterday;
+      }
+      else {
+        return res.status(403).json({ message: "❌ Invalid check-in time for checkout" });
+      }
+    }
+    // Only yesterday row can be night shift checkout
+    else if (yesterdayRow.length && yesterdayRow[0].check_in_time &&
+      yesterdayRow[0].check_in_time >= "19:30:00" &&
+      yesterdayRow[0].check_in_time <= "21:00:00" &&
       time >= "06:00:00" && time <= "07:55:00"
-        ? getYesterdayDate()
-        : getTodayDate();
+    ) {
+      date = yesterday;
+    } else {
+      return res.status(404).json({ message: "❌ No active shift found" });
+    }
 
     const [result] = await pool.query(
       `UPDATE attendance
        SET check_out_time=?
-       WHERE numerical_id=? AND date=?
-         AND check_in_time IS NOT NULL
-         AND check_out_time IS NULL`,
+       WHERE numerical_id=? AND date=? AND check_in_time IS NOT NULL AND check_out_time IS NULL`,
       [time, numerical_id, date]
     );
 
     if (!result.affectedRows)
       return res.status(404).json({ message: "❌ No active shift found" });
 
-    res.json({ message: "✅ Check-out successful", time });
+    res.json({ message: "✅ Check-out successful", time, date });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -157,6 +199,7 @@ export const getAttendanceByEmployee = async (req, res) => {
 
     res.json(rows);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 };
