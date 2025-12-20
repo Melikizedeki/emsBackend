@@ -79,7 +79,7 @@ export const checkOut = async (req, res) => {
 
     // ===== Determine shift logic like admin cron =====
     const isDayCheckout = time >= "18:00:00" && time <= "18:59:59";
-    const isNightCheckout = time >= "06:00:00" && time <= "06:59:59";
+    const isNightCheckout = time >= "06:00:00" && time <= "07:55:59";
     const isSatCheckout = day === 6 && time >= "15:00:00" && time <= "15:59:59";
 
     if (isNightCheckout) {
@@ -109,4 +109,16 @@ export const checkOut = async (req, res) => {
     console.error("Check-out error:", err);
     res.status(500).json({ message: "Server error" });
   }
+};
+
+export const getAttendanceByEmployee = (req, res) => {
+  const { numerical_id } = req.params;
+  db.query(
+    "SELECT date, check_in_time, check_out_time, status FROM attendance WHERE numerical_id=? ORDER BY date DESC",
+    [numerical_id],
+    (err, rows) => {
+      if (err) return res.status(500).json({ message: "Server error" });
+      res.json(rows);
+    }
+  );
 };
