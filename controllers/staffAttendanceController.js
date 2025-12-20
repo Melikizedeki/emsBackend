@@ -130,7 +130,7 @@ export const checkOut = async (req, res) => {
 
     // ---------- SATURDAY STAFF CHECKOUT ----------
     if (dayOfWeek === 6 && role === "staff" && todayRow.length && todayRow[0].check_in_time) {
-      if (time < "15:00:00") {
+      if (time < "12:30:00") {
         return res.status(403).json({
           message: "❌ Staff can checkout only after 15:00 on Saturday",
         });
