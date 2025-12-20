@@ -31,13 +31,15 @@ const getYesterdayDate = () =>
 const getCurrentTime = () =>
   new Date().toTimeString().slice(0, 8);
 
+const getDayOfWeek = () =>
+  new Date().getDay(); // 0=Sunday, 6=Saturday
+
 /* ======================================================
-   ✅ STAFF CHECK-IN
+   ✅ CHECK-IN (STAFF & FIELD)
 ====================================================== */
 export const checkIn = async (req, res) => {
   try {
     const { numerical_id, latitude, longitude } = req.body;
-
     if (!latitude || !longitude)
       return res.status(400).json({ message: "Coordinates required" });
 
@@ -47,7 +49,6 @@ export const checkIn = async (req, res) => {
       GEOFENCE_CENTER.lat,
       GEOFENCE_CENTER.lng
     );
-
     if (distance > GEOFENCE_RADIUS)
       return res.status(403).json({ message: "Outside company area" });
 
@@ -56,11 +57,11 @@ export const checkIn = async (req, res) => {
 
     let status = null;
 
-    // 🌞 Day shift
+    // Day shift: 07:30–08:00 present, 08:01–09:00 late
     if (time >= "07:30:00" && time <= "08:00:00") status = "present";
     else if (time >= "08:01:00" && time <= "09:00:00") status = "late";
 
-    // 🌙 Night shift
+    // Night shift: 19:30–20:00 present, 20:01–21:00 late
     else if (time >= "19:30:00" && time <= "20:00:00") status = "present";
     else if (time >= "20:01:00" && time <= "21:00:00") status = "late";
 
@@ -93,12 +94,11 @@ export const checkIn = async (req, res) => {
 };
 
 /* ======================================================
-   ✅ STAFF CHECK-OUT (SHIFT-AWARE WITHOUT SHIFT COLUMN)
+   ✅ CHECK-OUT (STAFF & FIELD, NIGHT SAFE, SATURDAY STAFF)
 ====================================================== */
 export const checkOut = async (req, res) => {
   try {
     const { numerical_id, latitude, longitude } = req.body;
-
     if (!latitude || !longitude)
       return res.status(400).json({ message: "Coordinates required" });
 
@@ -108,60 +108,83 @@ export const checkOut = async (req, res) => {
       GEOFENCE_CENTER.lat,
       GEOFENCE_CENTER.lng
     );
-
     if (distance > GEOFENCE_RADIUS)
       return res.status(403).json({ message: "Outside company area" });
 
     const time = getCurrentTime();
     const today = getTodayDate();
     const yesterday = getYesterdayDate();
+    const dayOfWeek = getDayOfWeek(); // 6 = Saturday
 
-    // 🔑 Fetch today's and yesterday's attendance
+    // Fetch today's and yesterday's attendance
     const [todayRow] = await pool.query(
-      `SELECT check_in_time FROM attendance
+      `SELECT check_in_time, status FROM attendance
        WHERE numerical_id=? AND date=?`,
       [numerical_id, today]
     );
-
     const [yesterdayRow] = await pool.query(
-      `SELECT check_in_time FROM attendance
+      `SELECT check_in_time, status FROM attendance
        WHERE numerical_id=? AND date=?`,
       [numerical_id, yesterday]
     );
 
     let date = today;
 
+    // ----- CASE 1: Day shift checkout today -----
     if (todayRow.length && todayRow[0].check_in_time) {
       const checkInTime = todayRow[0].check_in_time;
-      // Day shift check-in (07:30–09:00) → checkout today 18:00–18:59
       if (checkInTime >= "07:30:00" && checkInTime <= "09:00:00") {
+        // Day shift can checkout only 18:00–18:59
         if (!(time >= "18:00:00" && time <= "18:59:59")) {
           return res.status(403).json({
             message: "❌ Day shift can only checkout between 18:00–18:59",
           });
         }
       }
-      // Night shift check-in (19:30–21:00) → checkout next day 06:00–07:55
+      // Night shift: checkout next morning 06:00–07:55
       else if (checkInTime >= "19:30:00" && checkInTime <= "21:00:00") {
         if (!(time >= "06:00:00" && time <= "07:55:00")) {
           return res.status(403).json({
             message: "❌ Night shift checkout allowed only next morning 06:00–07:55",
           });
         }
-        date = yesterday;
-      }
-      else {
+        date = yesterday; // Checkout recorded on check-in date
+      } else {
         return res.status(403).json({ message: "❌ Invalid check-in time for checkout" });
       }
     }
-    // Only yesterday row can be night shift checkout
-    else if (yesterdayRow.length && yesterdayRow[0].check_in_time &&
+    // ----- CASE 2: Night shift from yesterday -----
+    else if (
+      yesterdayRow.length &&
       yesterdayRow[0].check_in_time >= "19:30:00" &&
       yesterdayRow[0].check_in_time <= "21:00:00" &&
-      time >= "06:00:00" && time <= "07:55:00"
+      time >= "06:00:00" &&
+      time <= "07:55:00"
     ) {
       date = yesterday;
-    } else {
+    }
+    // ----- CASE 3: Saturday early checkout for staff -----
+    else if (
+      dayOfWeek === 6 && // Saturday
+      todayRow.length &&
+      todayRow[0].check_in_time &&
+      todayRow[0].status !== null
+    ) {
+      // Staff only: Allow checkout after 15:00
+      const [roleRow] = await pool.query(
+        `SELECT role FROM employee WHERE id=?`,
+        [numerical_id]
+      );
+      if (roleRow.length && roleRow[0].role === "staff") {
+        if (time < "12:20:00") {
+          return res.status(403).json({
+            message: "❌ Staff can checkout only after 15:00 on Saturday",
+          });
+        }
+        date = today;
+      }
+    }
+    else {
       return res.status(404).json({ message: "❌ No active shift found" });
     }
 
