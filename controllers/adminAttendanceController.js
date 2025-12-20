@@ -42,6 +42,7 @@ export const initializeDailyAttendance = async (req, res) => {
   }
 };
 
+{/*
 // ======================================================
 // 2️⃣ CHECK-IN (ADMINS BLOCKED)
 // ======================================================
@@ -155,6 +156,8 @@ export const checkOut = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+*/}
 
 // ======================================================
 // 4️⃣ FETCH ATTENDANCE BY DATE (ADMINS EXCLUDED)
