@@ -22,15 +22,27 @@ const haversineDistance = (lat1, lon1, lat2, lon2) => {
 /* ======================================================
    🕒 TIME HELPERS (Tanzania time)
 ====================================================== */
-const getTzDate = () => new Date().toLocaleString("en-GB", { timeZone: "Africa/Dar_es_Salaam" });
-const getTodayDate = () => new Date(getTzDate()).toISOString().split("T")[0];
+const getTzDate = () => {
+  const now = new Date();
+  // UTC+3 offset for Dar es Salaam
+  const tzOffset = 3 * 60; // minutes
+  return new Date(now.getTime() + tzOffset * 60 * 1000);
+};
+
+const getTodayDate = () => getTzDate().toISOString().split("T")[0];
+
 const getYesterdayDate = () => {
-  const d = new Date(getTzDate());
+  const d = getTzDate();
   d.setDate(d.getDate() - 1);
   return d.toISOString().split("T")[0];
 };
-const getCurrentTime = () => new Date(getTzDate()).toTimeString().slice(0, 8);
-const getDayOfWeek = () => new Date(getTzDate()).toLocaleString("en-GB", { timeZone: "Africa/Dar_es_Salaam", weekday: "long" });
+
+const getCurrentTime = () => getTzDate().toTimeString().slice(0, 8);
+
+const getDayOfWeek = () => {
+  const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  return days[getTzDate().getDay()];
+};
 
 /* ======================================================
    ✅ CHECK-IN
@@ -122,7 +134,7 @@ export const checkOut = async (req, res) => {
 
     let date = today;
 
-    // ✅ Tuesday special rule for staff
+    // ✅ Tuesday staff rule
     if (dayOfWeek === "Tuesday" && role === "staff" && todayRow.length && todayRow[0].check_in_time) {
       if (time < "13:00:00") {
         return res.status(403).json({ message: "Staff can checkout after 13:00 on Tuesday" });
