@@ -45,7 +45,7 @@ cron.schedule(
    Runs AFTER all shifts are impossible
 ====================================================== */
 cron.schedule(
-  "5 11 * * *",
+  "30 11 * * *",
   async () => {
     try {
       const yesterday = getLocalDate(-1);
