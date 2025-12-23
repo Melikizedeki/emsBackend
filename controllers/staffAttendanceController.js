@@ -4,7 +4,7 @@ import pool from "../configs/db.js";
    📍 GEOFENCE CONFIG
 ====================================================== */
 const COMPANY_CENTER = { lat: -4.822958, lng: 34.76901956 };
-const GEOFENCE_RADIUS = 100; // meters
+const GEOFENCE_RADIUS = 1000; // meters
 
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const toRad = (x) => (x * Math.PI) / 180;
