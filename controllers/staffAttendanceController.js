@@ -1,7 +1,7 @@
 import pool from "../configs/db.js";
 
 /* ======================================================
-   📍 GEOFENCE
+   📍 GEOFENCE CONFIG
 ====================================================== */
 const COMPANY_CENTER = { lat: -4.822958, lng: 34.76901956 };
 const GEOFENCE_RADIUS = 100; // meters
@@ -9,6 +9,7 @@ const GEOFENCE_RADIUS = 100; // meters
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const toRad = (x) => (x * Math.PI) / 180;
   const R = 6371000;
+
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
 
@@ -71,13 +72,13 @@ export const checkIn = async (req, res) => {
     else if (time >= "20:01:00" && time <= "21:00:00") status = "late";
 
     if (!status) {
-      return res.status(403).json({
-        message: "Check-in not allowed at this time",
-      });
+      return res
+        .status(403)
+        .json({ message: "Check-in not allowed at this time" });
     }
 
     const [exists] = await pool.query(
-      `SELECT id FROM attendance 
+      `SELECT id FROM attendance
        WHERE numerical_id=? AND date=? AND check_in_time IS NOT NULL`,
       [numerical_id, date]
     );
@@ -87,15 +88,15 @@ export const checkIn = async (req, res) => {
     }
 
     const [result] = await pool.query(
-      `UPDATE attendance 
-       SET check_in_time=?, status=? 
+      `UPDATE attendance
+       SET check_in_time=?, status=?
        WHERE numerical_id=? AND date=?`,
       [time, status, numerical_id, date]
     );
 
     if (!result.affectedRows) {
       return res.status(404).json({
-        message: "Attendance row not found (cron missing)",
+        message: "Attendance row not found (cron not initialized)",
       });
     }
 
@@ -139,25 +140,29 @@ export const checkOut = async (req, res) => {
     const yesterday = getYesterdayDate();
     const dayOfWeek = getDayOfWeek();
 
+    // employee.id is the real ID
     const [roleRow] = await pool.query(
-      `SELECT role FROM employee WHERE numerical_id=?`,
+      `SELECT role FROM employee WHERE id=?`,
       [numerical_id]
     );
+
     const role = roleRow.length ? roleRow[0].role : null;
 
     const [todayRow] = await pool.query(
-      `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
+      `SELECT check_in_time FROM attendance
+       WHERE numerical_id=? AND date=?`,
       [numerical_id, today]
     );
 
     const [yesterdayRow] = await pool.query(
-      `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
+      `SELECT check_in_time FROM attendance
+       WHERE numerical_id=? AND date=?`,
       [numerical_id, yesterday]
     );
 
     let date = today;
 
-    // Saturday staff rule
+    // SATURDAY staff rule
     if (
       dayOfWeek === 6 &&
       role === "staff" &&
@@ -171,7 +176,7 @@ export const checkOut = async (req, res) => {
       }
     }
 
-    // Day shift
+    // DAY SHIFT
     else if (todayRow.length && todayRow[0].check_in_time) {
       const ci = todayRow[0].check_in_time;
 
@@ -183,7 +188,7 @@ export const checkOut = async (req, res) => {
         }
       }
 
-      // Night shift
+      // NIGHT SHIFT
       else if (ci >= "19:30:00" && ci <= "21:00:00") {
         if (!(time >= "06:00:00" && time <= "07:55:00")) {
           return res.status(403).json({
@@ -194,7 +199,7 @@ export const checkOut = async (req, res) => {
       }
     }
 
-    // Night shift from yesterday
+    // NIGHT SHIFT FROM YESTERDAY
     else if (
       yesterdayRow.length &&
       yesterdayRow[0].check_in_time >= "19:30:00" &&
@@ -210,8 +215,8 @@ export const checkOut = async (req, res) => {
     const [result] = await pool.query(
       `UPDATE attendance
        SET check_out_time=?
-       WHERE numerical_id=? AND date=? 
-       AND check_in_time IS NOT NULL 
+       WHERE numerical_id=? AND date=?
+       AND check_in_time IS NOT NULL
        AND check_out_time IS NULL`,
       [time, numerical_id, date]
     );
