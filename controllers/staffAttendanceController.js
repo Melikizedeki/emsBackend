@@ -20,11 +20,11 @@ const haversineDistance = (lat1, lon1, lat2, lon2) => {
 };
 
 /* ======================================================
-   🕒 TIME HELPERS (Tanzania time)
+   🕒 TIME HELPERS (Tanzania)
 ====================================================== */
 const getTzDate = () => {
   const now = new Date();
-  const tzOffset = 3 * 60; // minutes offset for Dar es Salaam
+  const tzOffset = 3 * 60; // +3 hours in minutes
   return new Date(now.getTime() + tzOffset * 60 * 1000);
 };
 
@@ -62,11 +62,11 @@ export const checkIn = async (req, res) => {
     const date = getTodayDate();
     let status = null;
 
-    // Day shift
+    // Day shift 07:30–08:00 present, 08:01–09:00 late
     if (time >= "07:30:00" && time <= "08:00:00") status = "present";
     else if (time >= "08:01:00" && time <= "09:00:00") status = "late";
 
-    // Night shift
+    // Night shift 19:30–20:00 present, 20:01–21:00 late
     else if (time >= "19:30:00" && time <= "20:00:00") status = "present";
     else if (time >= "20:01:00" && time <= "21:00:00") status = "late";
 
@@ -98,7 +98,7 @@ export const checkIn = async (req, res) => {
 ====================================================== */
 export const checkOut = async (req, res) => {
   try {
-    const { numerical_id, latitude, longitude } = req.body;
+    const { numerical_id, latitude, longitude, role } = req.body;
     if (!numerical_id || latitude == null || longitude == null)
       return res.status(400).json({ message: "Missing required fields" });
 
@@ -115,6 +115,7 @@ export const checkOut = async (req, res) => {
     const today = getTodayDate();
     const yesterday = getYesterdayDate();
     const dayOfWeek = getDayOfWeek();
+    const userRole = role || "staff";
 
     const [todayRow] = await pool.query(
       `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
@@ -127,18 +128,22 @@ export const checkOut = async (req, res) => {
 
     let date = today;
 
-    // DAY/NIGHT SHIFT logic
-    if (todayRow.length && todayRow[0].check_in_time) {
+    // === Tuesday staff bypass: checkout after 13:00 ===
+    if (dayOfWeek === "Tuesday" && userRole === "staff") {
+      if (time < "13:00:00")
+        return res.status(403).json({ message: "Staff can checkout after 13:00 on Tuesday" });
+    } 
+    // === Other shifts ===
+    else if (todayRow.length && todayRow[0].check_in_time) {
       const ci = todayRow[0].check_in_time;
 
-      // Day shift
+      // Day shift 07:30–09:00
       if (ci >= "07:30:00" && ci <= "09:00:00") {
         if (!(time >= "18:00:00" && time <= "18:59:59")) {
           return res.status(403).json({ message: "Day shift checkout: 18:00–18:59" });
         }
       }
-
-      // Night shift
+      // Night shift 19:30–21:00
       else if (ci >= "19:30:00" && ci <= "21:00:00") {
         if (!(time >= "06:00:00" && time <= "07:55:00")) {
           return res.status(403).json({ message: "Night shift checkout: 06:00–07:55" });
@@ -155,7 +160,8 @@ export const checkOut = async (req, res) => {
       time <= "07:55:00"
     ) {
       date = yesterday;
-    } else {
+    } 
+    else {
       return res.status(404).json({ message: "No active shift found" });
     }
 
