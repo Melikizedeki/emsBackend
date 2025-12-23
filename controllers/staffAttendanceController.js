@@ -24,21 +24,17 @@ const haversineDistance = (lat1, lon1, lat2, lon2) => {
 ====================================================== */
 const getTzDate = () => {
   const now = new Date();
-  // UTC+3 offset for Dar es Salaam
-  const tzOffset = 3 * 60; // minutes
+  const tzOffset = 3 * 60; // minutes offset for Dar es Salaam
   return new Date(now.getTime() + tzOffset * 60 * 1000);
 };
 
 const getTodayDate = () => getTzDate().toISOString().split("T")[0];
-
 const getYesterdayDate = () => {
   const d = getTzDate();
   d.setDate(d.getDate() - 1);
   return d.toISOString().split("T")[0];
 };
-
 const getCurrentTime = () => getTzDate().toTimeString().slice(0, 8);
-
 const getDayOfWeek = () => {
   const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   return days[getTzDate().getDay()];
@@ -120,9 +116,6 @@ export const checkOut = async (req, res) => {
     const yesterday = getYesterdayDate();
     const dayOfWeek = getDayOfWeek();
 
-    const [roleRow] = await pool.query(`SELECT role FROM employee WHERE id=?`, [numerical_id]);
-    const role = roleRow.length ? roleRow[0].role : null;
-
     const [todayRow] = await pool.query(
       `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
       [numerical_id, today]
@@ -133,13 +126,6 @@ export const checkOut = async (req, res) => {
     );
 
     let date = today;
-
-    // ✅ Tuesday staff rule
-    if (dayOfWeek === "Tuesday" && role === "staff" && todayRow.length && todayRow[0].check_in_time) {
-      if (time < "13:00:00") {
-        return res.status(403).json({ message: "Staff can checkout after 13:00 on Tuesday" });
-      }
-    }
 
     // DAY/NIGHT SHIFT logic
     if (todayRow.length && todayRow[0].check_in_time) {
