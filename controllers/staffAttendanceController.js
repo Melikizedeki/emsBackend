@@ -3,7 +3,7 @@ import pool from "../configs/db.js";
 /* ======================================================
    📍 GEOFENCE
 ====================================================== */
-const GEOFENCE_CENTER = { lat: -3.69019, lng: 33.41387 };
+const COMPANY_CENTER = { lat: -4.822958, lng: 34.76901956 };
 const GEOFENCE_RADIUS = 100;
 
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
