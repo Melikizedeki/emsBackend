@@ -41,35 +41,7 @@ cron.schedule(
 );
 
 /* ======================================================
-   🕕 06:00 — AUTO-CLOSE MISSED NIGHT CHECKOUTS
-   (Night shift ends latest at 07:55)
-====================================================== */
-cron.schedule(
-  "0 6 * * *",
-  async () => {
-    try {
-      const yesterday = getLocalDate(-1);
-
-      await pool.query(`
-        UPDATE attendance
-        SET 
-          check_out_time = '00:00:00',
-          status = 'late'
-        WHERE date = ?
-          AND check_in_time IS NOT NULL
-          AND check_out_time IS NULL
-      `, [yesterday]);
-
-      console.log("✅ Night shifts auto-closed:", yesterday);
-    } catch (err) {
-      console.error("❌ NIGHT CLOSE ERROR:", err);
-    }
-  },
-  { timezone: TZ }
-);
-
-/* ======================================================
-   🕘 09:00 — FINALIZE YESTERDAY (SAFE)
+   🕘 11:05 — FINALIZE YESTERDAY (SAFE)
    Runs AFTER all shifts are impossible
 ====================================================== */
 cron.schedule(
