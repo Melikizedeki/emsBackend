@@ -8,7 +8,7 @@ const GEOFENCE_RADIUS = 1000; // meters
 
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const toRad = (x) => (x * Math.PI) / 180;
-  const R = 6371000;
+  const R = 6371000; // meters
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
   const a =
@@ -20,13 +20,17 @@ const haversineDistance = (lat1, lon1, lat2, lon2) => {
 };
 
 /* ======================================================
-   🕒 TIME HELPERS
+   🕒 TIME HELPERS (Tanzania time)
 ====================================================== */
-const getTodayDate = () => new Date().toISOString().split("T")[0];
-const getYesterdayDate = () =>
-  new Date(Date.now() - 86400000).toISOString().split("T")[0];
-const getCurrentTime = () => new Date().toTimeString().slice(0, 8);
-const getDayOfWeek = () => new Date().getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+const getTzDate = () => new Date().toLocaleString("en-GB", { timeZone: "Africa/Dar_es_Salaam" });
+const getTodayDate = () => new Date(getTzDate()).toISOString().split("T")[0];
+const getYesterdayDate = () => {
+  const d = new Date(getTzDate());
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().split("T")[0];
+};
+const getCurrentTime = () => new Date(getTzDate()).toTimeString().slice(0, 8);
+const getDayOfWeek = () => new Date(getTzDate()).toLocaleString("en-GB", { timeZone: "Africa/Dar_es_Salaam", weekday: "long" });
 
 /* ======================================================
    ✅ CHECK-IN
@@ -118,8 +122,8 @@ export const checkOut = async (req, res) => {
 
     let date = today;
 
-    // TUESDAY staff special rule
-    if (dayOfWeek === 2 && role === "staff" && todayRow.length && todayRow[0].check_in_time) {
+    // ✅ Tuesday special rule for staff
+    if (dayOfWeek === "Tuesday" && role === "staff" && todayRow.length && todayRow[0].check_in_time) {
       if (time < "13:00:00") {
         return res.status(403).json({ message: "Staff can checkout after 13:00 on Tuesday" });
       }
