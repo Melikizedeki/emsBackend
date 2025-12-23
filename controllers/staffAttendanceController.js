@@ -8,7 +8,7 @@ const GEOFENCE_RADIUS = 1000; // meters
 
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const toRad = (x) => (x * Math.PI) / 180;
-  const R = 6371000; // meters
+  const R = 6371000;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
   const a =
@@ -111,7 +111,6 @@ export const checkOut = async (req, res) => {
       `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
       [numerical_id, today]
     );
-
     const [yesterdayRow] = await pool.query(
       `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
       [numerical_id, yesterday]
@@ -126,17 +125,18 @@ export const checkOut = async (req, res) => {
       }
     }
 
-    // DAY SHIFT
-    else if (todayRow.length && todayRow[0].check_in_time) {
+    // DAY/NIGHT SHIFT logic
+    if (todayRow.length && todayRow[0].check_in_time) {
       const ci = todayRow[0].check_in_time;
 
+      // Day shift
       if (ci >= "07:30:00" && ci <= "09:00:00") {
         if (!(time >= "18:00:00" && time <= "18:59:59")) {
           return res.status(403).json({ message: "Day shift checkout: 18:00–18:59" });
         }
       }
 
-      // NIGHT SHIFT
+      // Night shift
       else if (ci >= "19:30:00" && ci <= "21:00:00") {
         if (!(time >= "06:00:00" && time <= "07:55:00")) {
           return res.status(403).json({ message: "Night shift checkout: 06:00–07:55" });
@@ -144,8 +144,7 @@ export const checkOut = async (req, res) => {
         date = yesterday;
       }
     }
-
-    // NIGHT SHIFT FROM YESTERDAY
+    // Night shift from yesterday
     else if (
       yesterdayRow.length &&
       yesterdayRow[0].check_in_time >= "19:30:00" &&
@@ -178,12 +177,10 @@ export const checkOut = async (req, res) => {
 export const getAttendanceByEmployee = async (req, res) => {
   try {
     const { numerical_id } = req.params;
-
     const [rows] = await pool.query(
       `SELECT date, check_in_time, check_out_time, status FROM attendance WHERE numerical_id=? ORDER BY date DESC`,
       [numerical_id]
     );
-
     res.json(rows);
   } catch (err) {
     console.error("HISTORY ERROR:", err);
