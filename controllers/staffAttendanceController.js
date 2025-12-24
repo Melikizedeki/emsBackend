@@ -7,24 +7,18 @@ const TZ = "Africa/Dar_es_Salaam";
    🧠 LOCAL DATE & TIME HELPERS
 ====================================================== */
 const getLocalDate = (offsetDays = 0) => {
-  const now = new Date(
-    new Date().toLocaleString("en-US", { timeZone: TZ })
-  );
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
   now.setDate(now.getDate() + offsetDays);
-  return now.toISOString().split("T")[0];
+  return now.toISOString().split("T")[0]; // YYYY-MM-DD
 };
 
 const getLocalTime = () => {
-  const now = new Date(
-    new Date().toLocaleString("en-US", { timeZone: TZ })
-  );
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
   return now.toTimeString().slice(0, 8); // HH:MM:SS
 };
 
 const getLocalDay = () => {
-  const now = new Date(
-    new Date().toLocaleString("en-US", { timeZone: TZ })
-  );
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
   return now.getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
 };
 
@@ -35,23 +29,27 @@ cron.schedule(
   "0 0 * * *",
   async () => {
     try {
-      const today = getLocalDate(0);
+      const today = getLocalDate();
       const dayOfWeek = getLocalDay();
 
-      if (dayOfWeek === 0 || dayOfWeek === 6) return; // skip weekends
+      if (dayOfWeek === 0 || dayOfWeek === 6) return; // Skip weekends
 
-      await pool.query(`
+      // Insert pending attendance for all employees who don't have a record yet
+      await pool.query(
+        `
         INSERT INTO attendance (numerical_id, date, status)
         SELECT id, ?, 'pending'
         FROM employee
         WHERE id NOT IN (
           SELECT numerical_id FROM attendance WHERE date = ?
         )
-      `, [today, today]);
+        `,
+        [today, today]
+      );
 
       console.log("✅ Attendance initialized for", today);
     } catch (err) {
-      console.error("❌ INIT ERROR:", err);
+      console.error("❌ Attendance initialization error:", err);
     }
   },
   { timezone: TZ }
@@ -64,12 +62,14 @@ cron.schedule(
   "50 23 * * *",
   async () => {
     try {
-      const today = getLocalDate(0);
+      const today = getLocalDate();
       const dayOfWeek = getLocalDay();
 
-      if (dayOfWeek === 0 || dayOfWeek === 6) return; // skip weekends
+      if (dayOfWeek === 0 || dayOfWeek === 6) return; // Skip weekends
 
-      await pool.query(`
+      // Update attendance status if check-in/check-out missing
+      await pool.query(
+        `
         UPDATE attendance
         SET
           status = CASE
@@ -77,25 +77,28 @@ cron.schedule(
             WHEN check_out_time IS NULL THEN 'late'
             ELSE status
           END,
-          check_in_time  = IFNULL(check_in_time, '00:00:00'),
+          check_in_time = IFNULL(check_in_time, '00:00:00'),
           check_out_time = IFNULL(check_out_time, '00:00:00')
         WHERE date = ?
-      `, [today]);
+        `,
+        [today]
+      );
 
       console.log("✅ Attendance finalized for", today);
     } catch (err) {
-      console.error("❌ FINALIZE ERROR:", err);
+      console.error("❌ Attendance finalization error:", err);
     }
   },
   { timezone: TZ }
 );
 
 /* ======================================================
-   ⏱️ Check-in & Check-out Enforcement
+   ⏱️ Check-in Function
 ====================================================== */
 export const checkIn = async (numerical_id) => {
   const now = getLocalTime();
   const dayOfWeek = getLocalDay();
+
   if (dayOfWeek === 0 || dayOfWeek === 6) throw new Error("No attendance on weekends.");
 
   let status;
@@ -103,7 +106,7 @@ export const checkIn = async (numerical_id) => {
   else if (now >= "08:01:00" && now <= "09:00:00") status = "late";
   else throw new Error("Check-in allowed only between 07:30 and 09:00.");
 
-  const today = getLocalDate(0);
+  const today = getLocalDate();
   await pool.query(
     `UPDATE attendance SET check_in_time = ?, status = ? WHERE numerical_id = ? AND date = ?`,
     [now, status, numerical_id, today]
@@ -112,18 +115,45 @@ export const checkIn = async (numerical_id) => {
   return { message: `Check-in successful. Status: ${status}` };
 };
 
+/* ======================================================
+   ⏱️ Check-out Function
+====================================================== */
 export const checkOut = async (numerical_id) => {
   const now = getLocalTime();
   const dayOfWeek = getLocalDay();
-  if (dayOfWeek === 0 || dayOfWeek === 6) throw new Error("No attendance on weekends.");
 
+  if (dayOfWeek === 0 || dayOfWeek === 6) throw new Error("No attendance on weekends.");
   if (now < "18:00:00" || now > "23:45:00") throw new Error("Check-out allowed only between 18:00 and 23:45.");
 
-  const today = getLocalDate(0);
+  const today = getLocalDate();
   await pool.query(
     `UPDATE attendance SET check_out_time = ? WHERE numerical_id = ? AND date = ?`,
     [now, numerical_id, today]
   );
 
   return { message: "Check-out successful." };
+};
+
+/* ======================================================
+   📝 Get Attendance by Employee
+====================================================== */
+export const getAttendanceByEmployee = async (req, res) => {
+  try {
+    const { numerical_id } = req.params;
+    const today = getLocalDate();
+
+    const [rows] = await pool.query(
+      `SELECT * FROM attendance WHERE numerical_id = ? AND date = ?`,
+      [numerical_id, today]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ message: "No attendance record found for today." });
+    }
+
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("❌ Get attendance error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
