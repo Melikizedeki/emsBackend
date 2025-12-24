@@ -41,14 +41,14 @@ cron.schedule(
 );
 
 /* ======================================================
-   🕘 11:05 — FINALIZE YESTERDAY (SAFE)
-   Runs AFTER all shifts are impossible
+   🕚 23:50 — FINALIZE TODAY ATTENDANCE
+   Runs at the end of the day
 ====================================================== */
 cron.schedule(
-  "30 11 * * *",
+  "50 23 * * *",
   async () => {
     try {
-      const yesterday = getLocalDate(-1);
+      const today = getLocalDate(0);
 
       await pool.query(`
         UPDATE attendance
@@ -61,9 +61,9 @@ cron.schedule(
           check_in_time  = IFNULL(check_in_time, '00:00:00'),
           check_out_time = IFNULL(check_out_time, '00:00:00')
         WHERE date = ?
-      `, [yesterday]);
+      `, [today]);
 
-      console.log("✅ Attendance finalized safely:", yesterday);
+      console.log("✅ Attendance finalized:", today);
     } catch (err) {
       console.error("❌ FINALIZE ERROR:", err);
     }
