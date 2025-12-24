@@ -1,195 +1,129 @@
+import cron from "node-cron";
 import pool from "../configs/db.js";
 
-/* ======================================================
-   📍 GEOFENCE CONFIG
-====================================================== */
-const COMPANY_CENTER = { lat: -4.822958, lng: 34.76901956 };
-const GEOFENCE_RADIUS = 1000; // meters
-
-const haversineDistance = (lat1, lon1, lat2, lon2) => {
-  const toRad = (x) => (x * Math.PI) / 180;
-  const R = 6371000; 
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-};
+const TZ = "Africa/Dar_es_Salaam";
 
 /* ======================================================
-   🕒 TIME HELPERS (Tanzania)
+   🧠 LOCAL DATE & TIME HELPERS
 ====================================================== */
-const getTzDate = () => {
-  const now = new Date();
-  const tzOffset = 3 * 60; 
-  return new Date(now.getTime() + tzOffset * 60 * 1000);
+const getLocalDate = (offsetDays = 0) => {
+  const now = new Date(
+    new Date().toLocaleString("en-US", { timeZone: TZ })
+  );
+  now.setDate(now.getDate() + offsetDays);
+  return now.toISOString().split("T")[0];
 };
 
-const timeToSeconds = (time) => {
-  const [h, m, s] = time.split(":").map(Number);
-  return h * 3600 + m * 60 + s;
+const getLocalTime = () => {
+  const now = new Date(
+    new Date().toLocaleString("en-US", { timeZone: TZ })
+  );
+  return now.toTimeString().slice(0, 8); // HH:MM:SS
 };
 
-const getTodayDate = () => getTzDate().toISOString().split("T")[0];
-const getYesterdayDate = () => {
-  const d = getTzDate();
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().split("T")[0];
-};
-const getCurrentTime = () => getTzDate().toTimeString().slice(0, 8);
-const getDayOfWeek = () => ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][getTzDate().getDay()];
-
-/* ======================================================
-   ✅ CHECK-IN
-====================================================== */
-export const checkIn = async (req, res) => {
-  try {
-    const { numerical_id, latitude, longitude } = req.body;
-    if (!numerical_id || latitude == null || longitude == null)
-      return res.status(400).json({ message: "Missing required fields" });
-
-    const distance = haversineDistance(Number(latitude), Number(longitude), COMPANY_CENTER.lat, COMPANY_CENTER.lng);
-    if (distance > GEOFENCE_RADIUS)
-      return res.status(403).json({ message: "Outside company area" });
-
-    const time = getCurrentTime();
-    const date = getTodayDate();
-    let status = null;
-
-    // Day shift
-    if (time >= "07:30:00" && time <= "08:00:00") status = "present";
-    else if (time >= "08:01:00" && time <= "09:00:00") status = "late";
-
-    // Night shift
-    else if (time >= "19:30:00" && time <= "20:00:00") status = "present";
-    else if (time >= "20:01:00" && time <= "21:00:00") status = "late";
-
-    if (!status)
-      return res.status(403).json({ message: "Check-in not allowed at this time" });
-
-    const [exists] = await pool.query(
-      `SELECT id FROM attendance WHERE numerical_id=? AND date=? AND check_in_time IS NOT NULL`,
-      [numerical_id, date]
-    );
-    if (exists.length) return res.status(409).json({ message: "Already checked in" });
-
-    const [result] = await pool.query(
-      `UPDATE attendance SET check_in_time=?, status=? WHERE numerical_id=? AND date=?`,
-      [time, status, numerical_id, date]
-    );
-    if (!result.affectedRows)
-      return res.status(404).json({ message: "Attendance row not found (cron not initialized)" });
-
-    res.json({ message: "Check-in successful", status, time });
-  } catch (err) {
-    console.error("CHECK-IN ERROR:", err);
-    res.status(500).json({ message: "Server error" });
-  }
+const getLocalDay = () => {
+  const now = new Date(
+    new Date().toLocaleString("en-US", { timeZone: TZ })
+  );
+  return now.getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
 };
 
 /* ======================================================
-   ✅ CHECK-OUT
+   🕛 00:00 — INITIALIZE TODAY ATTENDANCE (Mon-Fri)
 ====================================================== */
-export const checkOut = async (req, res) => {
-  try {
-    const { numerical_id, latitude, longitude, role } = req.body;
-    if (!numerical_id || latitude == null || longitude == null)
-      return res.status(400).json({ message: "Missing required fields" });
+cron.schedule(
+  "0 0 * * *",
+  async () => {
+    try {
+      const today = getLocalDate(0);
+      const dayOfWeek = getLocalDay();
 
-    const distance = haversineDistance(Number(latitude), Number(longitude), COMPANY_CENTER.lat, COMPANY_CENTER.lng);
-    if (distance > GEOFENCE_RADIUS)
-      return res.status(403).json({ message: "Outside company area" });
+      if (dayOfWeek === 0 || dayOfWeek === 6) return; // skip weekends
 
-    const nowTime = getCurrentTime();
-    const nowSeconds = timeToSeconds(nowTime);
-    const today = getTodayDate();
-    const yesterday = getYesterdayDate();
-    const dayOfWeek = getDayOfWeek();
-    const userRole = role || "staff";
+      await pool.query(`
+        INSERT INTO attendance (numerical_id, date, status)
+        SELECT id, ?, 'pending'
+        FROM employee
+        WHERE id NOT IN (
+          SELECT numerical_id FROM attendance WHERE date = ?
+        )
+      `, [today, today]);
 
-    const [todayRow] = await pool.query(
-      `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
-      [numerical_id, today]
-    );
-    const [yesterdayRow] = await pool.query(
-      `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
-      [numerical_id, yesterday]
-    );
-
-    let dateToUpdate = today;
-    let checkInTime = todayRow[0]?.check_in_time || yesterdayRow[0]?.check_in_time;
-
-    if (!checkInTime) return res.status(404).json({ message: "No active shift found" });
-
-    const ciSeconds = timeToSeconds(checkInTime);
-
-
-
-     // ✅ STAFF RULE — FIRST
-if (dayOfWeek === "Wednesday" && userRole === "staff") {
-  if (nowSeconds < 9 * 3600) {
-    return res.status(403).json({
-      message: "Staff can checkout after 9:00 on Wednesday",
-    });
-  }
-}
-
-     // DAY SHIFT — NON STAFF ONLY
-if (dayOfWeek === "Wednesday" && shift === "DAY" && userRole !== "staff") {
-  if (nowSeconds < 18 * 3600 || nowSeconds > 18 * 3600 + 59 * 60) {
-    return res.status(403).json({
-      message: "today is Wednesday day-shift checkout allowed only 18:00-18:59",
-    });
-  }
-}
-
-     
-
-    // Day shift 07:30–09:00, checkout 18:00–18:59
-    if (ciSeconds >= 7*3600 + 30*60 && ciSeconds <= 9*3600) {
-      if (!(nowSeconds >= 18*3600 && nowSeconds <= 18*3600 + 59*60 + 59)) {
-        return res.status(403).json({ message: "Day shift checkout allowed 18:00–18:59" });
-      }
+      console.log("✅ Attendance initialized for", today);
+    } catch (err) {
+      console.error("❌ INIT ERROR:", err);
     }
-
-    // Night shift 19:30–21:00, checkout 06:00–07:55
-    else if (ciSeconds >= 19*3600 + 30*60 && ciSeconds <= 21*3600) {
-      if (!(nowSeconds >= 6*3600 && nowSeconds <= 7*3600 + 55*60)) {
-        return res.status(403).json({ message: "Night shift checkout allowed 06:00–07:55" });
-      }
-      dateToUpdate = yesterday;
-    }
-
-    const [result] = await pool.query(
-      `UPDATE attendance SET check_out_time=? WHERE numerical_id=? AND date=? AND check_in_time IS NOT NULL AND check_out_time IS NULL`,
-      [nowTime, numerical_id, dateToUpdate]
-    );
-
-    if (!result.affectedRows) return res.status(404).json({ message: "No active shift found" });
-
-    res.json({ message: "Check-out successful", time: nowTime, date: dateToUpdate });
-  } catch (err) {
-    console.error("CHECK-OUT ERROR:", err);
-    res.status(500).json({ message: "Server error" });
-  }
-};
+  },
+  { timezone: TZ }
+);
 
 /* ======================================================
-   📄 GET ATTENDANCE HISTORY
+   🕚 23:50 — FINALIZE TODAY ATTENDANCE (Mon-Fri)
 ====================================================== */
-export const getAttendanceByEmployee = async (req, res) => {
-  try {
-    const { numerical_id } = req.params;
-    const [rows] = await pool.query(
-      `SELECT date, check_in_time, check_out_time, status FROM attendance WHERE numerical_id=? ORDER BY date DESC`,
-      [numerical_id]
-    );
-    res.json(rows);
-  } catch (err) {
-    console.error("HISTORY ERROR:", err);
-    res.status(500).json({ message: "Server error" });
-  }
+cron.schedule(
+  "50 23 * * *",
+  async () => {
+    try {
+      const today = getLocalDate(0);
+      const dayOfWeek = getLocalDay();
+
+      if (dayOfWeek === 0 || dayOfWeek === 6) return; // skip weekends
+
+      await pool.query(`
+        UPDATE attendance
+        SET
+          status = CASE
+            WHEN check_in_time IS NULL THEN 'absent'
+            WHEN check_out_time IS NULL THEN 'late'
+            ELSE status
+          END,
+          check_in_time  = IFNULL(check_in_time, '00:00:00'),
+          check_out_time = IFNULL(check_out_time, '00:00:00')
+        WHERE date = ?
+      `, [today]);
+
+      console.log("✅ Attendance finalized for", today);
+    } catch (err) {
+      console.error("❌ FINALIZE ERROR:", err);
+    }
+  },
+  { timezone: TZ }
+);
+
+/* ======================================================
+   ⏱️ Check-in & Check-out Enforcement
+====================================================== */
+export const checkIn = async (numerical_id) => {
+  const now = getLocalTime();
+  const dayOfWeek = getLocalDay();
+  if (dayOfWeek === 0 || dayOfWeek === 6) throw new Error("No attendance on weekends.");
+
+  let status;
+  if (now >= "07:30:00" && now <= "08:00:00") status = "present";
+  else if (now >= "08:01:00" && now <= "09:00:00") status = "late";
+  else throw new Error("Check-in allowed only between 07:30 and 09:00.");
+
+  const today = getLocalDate(0);
+  await pool.query(
+    `UPDATE attendance SET check_in_time = ?, status = ? WHERE numerical_id = ? AND date = ?`,
+    [now, status, numerical_id, today]
+  );
+
+  return { message: `Check-in successful. Status: ${status}` };
+};
+
+export const checkOut = async (numerical_id) => {
+  const now = getLocalTime();
+  const dayOfWeek = getLocalDay();
+  if (dayOfWeek === 0 || dayOfWeek === 6) throw new Error("No attendance on weekends.");
+
+  if (now < "18:00:00" || now > "23:45:00") throw new Error("Check-out allowed only between 18:00 and 23:45.");
+
+  const today = getLocalDate(0);
+  await pool.query(
+    `UPDATE attendance SET check_out_time = ? WHERE numerical_id = ? AND date = ?`,
+    [now, numerical_id, today]
+  );
+
+  return { message: "Check-out successful." };
 };
