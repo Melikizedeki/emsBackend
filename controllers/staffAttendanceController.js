@@ -1,169 +1,195 @@
 import pool from "../configs/db.js";
 
-/* ==========================
-   📍 GEOFENCE
-========================== */
-const CENTER = { lat: -4.822958, lng: 34.76901956 };
-const RADIUS = 1000;
+/* ======================================================
+   📍 GEOFENCE CONFIG
+====================================================== */
+const COMPANY_CENTER = { lat: -4.822958, lng: 34.76901956 };
+const GEOFENCE_RADIUS = 1000; // meters
 
-const haversine = (a, b, c, d) => {
+const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const toRad = (x) => (x * Math.PI) / 180;
-  const R = 6371000;
-  const dLat = toRad(c - a);
-  const dLon = toRad(d - b);
-  const x =
+  const R = 6371000; 
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(a)) *
-      Math.cos(toRad(c)) *
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
       Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-/* ==========================
-   🕒 TIME HELPERS
-========================== */
-const tzNow = () =>
-  new Date(new Date().toLocaleString("en-US", {
-    timeZone: "Africa/Dar_es_Salaam",
-  }));
+/* ======================================================
+   🕒 TIME HELPERS (Tanzania)
+====================================================== */
+const getTzDate = () => {
+  const now = new Date();
+  const tzOffset = 3 * 60; 
+  return new Date(now.getTime() + tzOffset * 60 * 1000);
+};
 
-const timeToSec = (t) => {
-  const [h, m, s] = t.split(":").map(Number);
+const timeToSeconds = (time) => {
+  const [h, m, s] = time.split(":").map(Number);
   return h * 3600 + m * 60 + s;
 };
 
-const today = () => tzNow().toISOString().split("T")[0];
-const yesterday = () => {
-  const d = tzNow();
+const getTodayDate = () => getTzDate().toISOString().split("T")[0];
+const getYesterdayDate = () => {
+  const d = getTzDate();
   d.setDate(d.getDate() - 1);
   return d.toISOString().split("T")[0];
 };
+const getCurrentTime = () => getTzDate().toTimeString().slice(0, 8);
+const getDayOfWeek = () => ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][getTzDate().getDay()];
 
-const nowTime = () => tzNow().toTimeString().slice(0, 8);
-const weekday = () =>
-  ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][
-    tzNow().getDay()
-  ];
-
-/* ==========================
+/* ======================================================
    ✅ CHECK-IN
-========================== */
+====================================================== */
 export const checkIn = async (req, res) => {
-  const { numerical_id, latitude, longitude } = req.body;
+  try {
+    const { numerical_id, latitude, longitude } = req.body;
+    if (!numerical_id || latitude == null || longitude == null)
+      return res.status(400).json({ message: "Missing required fields" });
 
-  const dist = haversine(
-    latitude,
-    longitude,
-    CENTER.lat,
-    CENTER.lng
-  );
+    const distance = haversineDistance(Number(latitude), Number(longitude), COMPANY_CENTER.lat, COMPANY_CENTER.lng);
+    if (distance > GEOFENCE_RADIUS)
+      return res.status(403).json({ message: "Outside company area" });
 
-  if (dist > RADIUS)
-    return res.status(403).json({ message: "Outside company area" });
+    const time = getCurrentTime();
+    const date = getTodayDate();
+    let status = null;
 
-  const time = nowTime();
-  const sec = timeToSec(time);
-  let status = null;
+    // Day shift
+    if (time >= "07:30:00" && time <= "08:00:00") status = "present";
+    else if (time >= "08:01:00" && time <= "09:00:00") status = "late";
 
-  // Day shift
-  if (sec >= 7.5 * 3600 && sec <= 9 * 3600)
-    status = sec <= 8 * 3600 ? "present" : "late";
+    // Night shift
+    else if (time >= "19:30:00" && time <= "20:00:00") status = "present";
+    else if (time >= "20:01:00" && time <= "21:00:00") status = "late";
 
-  // Night shift
-  if (sec >= 19.5 * 3600 && sec <= 21 * 3600)
-    status = sec <= 20 * 3600 ? "present" : "late";
+    if (!status)
+      return res.status(403).json({ message: "Check-in not allowed at this time" });
 
-  if (!status)
-    return res.status(403).json({ message: "Check-in not allowed now" });
+    const [exists] = await pool.query(
+      `SELECT id FROM attendance WHERE numerical_id=? AND date=? AND check_in_time IS NOT NULL`,
+      [numerical_id, date]
+    );
+    if (exists.length) return res.status(409).json({ message: "Already checked in" });
 
-  await pool.query(
-    `UPDATE attendance SET check_in_time=?, status=?
-     WHERE numerical_id=? AND date=?`,
-    [time, status, numerical_id, today()]
-  );
+    const [result] = await pool.query(
+      `UPDATE attendance SET check_in_time=?, status=? WHERE numerical_id=? AND date=?`,
+      [time, status, numerical_id, date]
+    );
+    if (!result.affectedRows)
+      return res.status(404).json({ message: "Attendance row not found (cron not initialized)" });
 
-  res.json({ message: "Check-in successful" });
+    res.json({ message: "Check-in successful", status, time });
+  } catch (err) {
+    console.error("CHECK-IN ERROR:", err);
+    res.status(500).json({ message: "Server error" });
+  }
 };
 
-/* ==========================
+/* ======================================================
    ✅ CHECK-OUT
-========================== */
+====================================================== */
 export const checkOut = async (req, res) => {
-  const { numerical_id, latitude, longitude, role = "staff" } = req.body;
+  try {
+    const { numerical_id, latitude, longitude, role } = req.body;
+    if (!numerical_id || latitude == null || longitude == null)
+      return res.status(400).json({ message: "Missing required fields" });
 
-  const dist = haversine(latitude, longitude, CENTER.lat, CENTER.lng);
-  if (dist > RADIUS)
-    return res.status(403).json({ message: "Outside company area" });
+    const distance = haversineDistance(Number(latitude), Number(longitude), COMPANY_CENTER.lat, COMPANY_CENTER.lng);
+    if (distance > GEOFENCE_RADIUS)
+      return res.status(403).json({ message: "Outside company area" });
 
-  const nowSec = timeToSec(nowTime());
-  const day = weekday();
+    const nowTime = getCurrentTime();
+    const nowSeconds = timeToSeconds(nowTime);
+    const today = getTodayDate();
+    const yesterday = getYesterdayDate();
+    const dayOfWeek = getDayOfWeek();
+    const userRole = role || "staff";
 
-  const [[todayRow]] = await pool.query(
-    `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
-    [numerical_id, today()]
-  );
+    const [todayRow] = await pool.query(
+      `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
+      [numerical_id, today]
+    );
+    const [yesterdayRow] = await pool.query(
+      `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
+      [numerical_id, yesterday]
+    );
 
-  const [[yRow]] = await pool.query(
-    `SELECT check_in_time FROM attendance WHERE numerical_id=? AND date=?`,
-    [numerical_id, yesterday()]
-  );
+    let dateToUpdate = today;
+    let checkInTime = todayRow[0]?.check_in_time || yesterdayRow[0]?.check_in_time;
 
-  let checkIn = todayRow?.check_in_time;
-  let dateToUpdate = today();
+    if (!checkInTime) return res.status(404).json({ message: "No active shift found" });
 
-  if (!checkIn && yRow?.check_in_time) {
-    checkIn = yRow.check_in_time;
-    dateToUpdate = yesterday();
-  }
+    const ciSeconds = timeToSeconds(checkInTime);
 
-  if (!checkIn)
-    return res.status(404).json({ message: "No active shift" });
 
-  const ciSec = timeToSec(checkIn);
 
-  // 🔴 Wednesday staff rule
-  if (day === "Wednesday" && role === "staff" && nowSec < 9 * 3600) {
+     // ✅ STAFF RULE — FIRST
+if (dayOfWeek === "Wednesday" && userRole === "staff") {
+  if (nowSeconds < 9 * 3600) {
     return res.status(403).json({
-      message: "Staff can checkout after 09:00 on Wednesday",
+      message: "Staff can checkout after 9:00 on Wednesday",
     });
   }
+}
 
-  // Day shift checkout
-  if (ciSec >= 7.5 * 3600 && ciSec <= 9 * 3600) {
-    if (nowSec < 18 * 3600 || nowSec > 18 * 3600 + 59 * 60) {
-      return res.status(403).json({
-        message: "Day shift checkout allowed 17:00–18:59",
-      });
-    }
+     // DAY SHIFT — NON STAFF ONLY
+if (dayOfWeek === "Wednesday" && shift === "DAY" && userRole !== "staff") {
+  if (nowSeconds < 18 * 3600 || nowSeconds > 18 * 3600 + 59 * 60) {
+    return res.status(403).json({
+      message: "today is Wednesday day-shift checkout allowed only 18:00-18:59",
+    });
   }
+}
 
-  // Night shift checkout
-  if (ciSec >= 19.5 * 3600 && ciSec <= 21 * 3600) {
-    if (nowSec < 6 * 3600 || nowSec > 7 * 3600 + 55 * 60) {
-      return res.status(403).json({
-        message: "Night shift checkout allowed 06:00–07:55",
-      });
+     
+
+    // Day shift 07:30–09:00, checkout 18:00–18:59
+    if (ciSeconds >= 7*3600 + 30*60 && ciSeconds <= 9*3600) {
+      if (!(nowSeconds >= 18*3600 && nowSeconds <= 18*3600 + 59*60 + 59)) {
+        return res.status(403).json({ message: "Day shift checkout allowed 18:00–18:59" });
+      }
     }
-    dateToUpdate = yesterday();
+
+    // Night shift 19:30–21:00, checkout 06:00–07:55
+    else if (ciSeconds >= 19*3600 + 30*60 && ciSeconds <= 21*3600) {
+      if (!(nowSeconds >= 6*3600 && nowSeconds <= 7*3600 + 55*60)) {
+        return res.status(403).json({ message: "Night shift checkout allowed 06:00–07:55" });
+      }
+      dateToUpdate = yesterday;
+    }
+
+    const [result] = await pool.query(
+      `UPDATE attendance SET check_out_time=? WHERE numerical_id=? AND date=? AND check_in_time IS NOT NULL AND check_out_time IS NULL`,
+      [nowTime, numerical_id, dateToUpdate]
+    );
+
+    if (!result.affectedRows) return res.status(404).json({ message: "No active shift found" });
+
+    res.json({ message: "Check-out successful", time: nowTime, date: dateToUpdate });
+  } catch (err) {
+    console.error("CHECK-OUT ERROR:", err);
+    res.status(500).json({ message: "Server error" });
   }
-
-  await pool.query(
-    `UPDATE attendance SET check_out_time=?
-     WHERE numerical_id=? AND date=?`,
-    [nowTime(), numerical_id, dateToUpdate]
-  );
-
-  res.json({ message: "Check-out successful" });
 };
 
-/* ==========================
-   📄 HISTORY
-========================== */
+/* ======================================================
+   📄 GET ATTENDANCE HISTORY
+====================================================== */
 export const getAttendanceByEmployee = async (req, res) => {
-  const [rows] = await pool.query(
-    `SELECT date, check_in_time, check_out_time, status
-     FROM attendance WHERE numerical_id=? ORDER BY date DESC`,
-    [req.params.numerical_id]
-  );
-  res.json(rows);
+  try {
+    const { numerical_id } = req.params;
+    const [rows] = await pool.query(
+      `SELECT date, check_in_time, check_out_time, status FROM attendance WHERE numerical_id=? ORDER BY date DESC`,
+      [numerical_id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("HISTORY ERROR:", err);
+    res.status(500).json({ message: "Server error" });
+  }
 };
