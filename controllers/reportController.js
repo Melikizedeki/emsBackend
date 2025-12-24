@@ -77,7 +77,7 @@ export const getPerformanceReport = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 👥 Fetch employees + attendance (exclude admin)
+    // 👥 Fetch employees + attendance (exclude admin and field)
     // --------------------------------------------------
     const sql = `
       SELECT 
@@ -91,7 +91,7 @@ export const getPerformanceReport = async (req, res) => {
       FROM employee e
       LEFT JOIN attendance a 
         ON e.id = a.numerical_id AND a.date BETWEEN ? AND ?
-      WHERE e.role IN ('staff', 'field')
+      WHERE e.role NOT IN ('admin', 'field')
       ORDER BY e.name ASC
     `;
 
