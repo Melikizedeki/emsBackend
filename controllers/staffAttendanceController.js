@@ -132,7 +132,7 @@ export const checkOut = async (req, res) => {
   if (ciSec >= 7.5 * 3600 && ciSec <= 9 * 3600) {
     if (nowSec < 18 * 3600 || nowSec > 18 * 3600 + 59 * 60) {
       return res.status(403).json({
-        message: "Day shift checkout allowed 18:00–18:59",
+        message: "Day shift checkout allowed 17:00–18:59",
       });
     }
   }
