@@ -126,10 +126,14 @@ export const checkOut = async (req, res) => {
 
     const ciSeconds = timeToSeconds(checkInTime);
 
-    // Tuesday staff rule
-    if (dayOfWeek === "Tuesday" && userRole === "staff" && nowSeconds < 13*3600) {
-      return res.status(403).json({ message: "Staff can checkout after 13:00 on Tuesday" });
-    }
+
+     // Wednesday staff rule
+if (dayOfWeek === "Wednesday" && userRole === "staff" && nowSeconds < 13 * 3600) {
+  return res.status(403).json({
+    message: "Staff can checkout after 13:00 on Wednesday",
+  });
+}
+
 
     // Day shift 07:30–09:00, checkout 18:00–18:59
     if (ciSeconds >= 7*3600 + 30*60 && ciSeconds <= 9*3600) {
