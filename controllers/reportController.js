@@ -1,4 +1,3 @@
-// controllers/reportsController.js
 import pool from "../configs/db.js"; // mysql2/promise
 
 // ======================================================
@@ -16,7 +15,7 @@ const getAttendanceScore = (status) => {
   return 0; // absent or others
 };
 
-// Punctuality score (30-minute decay windows only)
+// Punctuality score (day shift only 07:30 - 08:00)
 const getPunctualityScore = (checkInTime) => {
   if (!checkInTime) return 0;
 
@@ -31,15 +30,7 @@ const getPunctualityScore = (checkInTime) => {
     return Math.round(((dayEnd - seconds) / (dayEnd - dayStart)) * 100);
   }
 
-  // -------- NIGHT SHIFT (19:30 - 20:00) --------
-  const nightStart = 19 * 3600 + 30 * 60; // 19:30
-  const nightEnd = 20 * 3600;             // 20:00
-
-  if (seconds >= nightStart && seconds <= nightEnd) {
-    return Math.round(((nightEnd - seconds) / (nightEnd - nightStart)) * 100);
-  }
-
-  // Outside punctuality windows
+  // Outside day punctuality window
   return 0;
 };
 
@@ -83,7 +74,7 @@ export const getPerformanceReport = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 👥 Fetch employees + attendance (exclude admin)
+    // 👥 Fetch employees + attendance (only 'staff')
     // --------------------------------------------------
     const sql = `
       SELECT 
@@ -98,7 +89,7 @@ export const getPerformanceReport = async (req, res) => {
       LEFT JOIN attendance a 
         ON e.id = a.numerical_id
         AND a.date BETWEEN ? AND ?
-      WHERE e.role IN ('staff', 'field')
+      WHERE e.role = 'staff'
       ORDER BY e.name ASC
     `;
 
@@ -203,42 +194,6 @@ export const getPerformanceReport = async (req, res) => {
     res.json(report);
   } catch (err) {
     console.error("❌ Performance report error:", err.message);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// ======================================================
-// 💰 PAYROLL REPORT (UNCHANGED)
-// ======================================================
-export const getPayrollReport = async (req, res) => {
-  try {
-    const { year, month } = req.query;
-    let filter = "";
-
-    if (year && month) {
-      filter = `WHERE p.month='${year}-${month.toString().padStart(2, "0")}'`;
-    } else if (year) {
-      filter = `WHERE p.month LIKE '${year}-%'`;
-    }
-
-    const sql = `
-      SELECT 
-        e.employee_id,
-        e.name,
-        e.role,
-        p.month,
-        p.salary,
-        p.net_salary
-      FROM payrolls p
-      LEFT JOIN employee e ON p.numerical_id = e.id
-      ${filter}
-      ORDER BY p.month DESC
-    `;
-
-    const [rows] = await pool.query(sql);
-    res.json(rows);
-  } catch (err) {
-    console.error("❌ Payroll report error:", err.message);
     res.status(500).json({ error: err.message });
   }
 };
