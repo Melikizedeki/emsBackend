@@ -127,13 +127,26 @@ export const checkOut = async (req, res) => {
     const ciSeconds = timeToSeconds(checkInTime);
 
 
-     // Wednesday staff rule
-if (dayOfWeek === "Wednesday" && userRole === "staff" && nowSeconds < 9 * 3600) {
-  return res.status(403).json({
-    message: "Staff can checkout after 09:00 on Wednesday",
-  });
+
+     // ✅ STAFF RULE — FIRST
+if (dayOfWeek === "Wednesday" && userRole === "staff") {
+  if (nowSeconds < 9 * 3600) {
+    return res.status(403).json({
+      message: "Staff can checkout after 9:00 on Wednesday",
+    });
+  }
 }
 
+     // DAY SHIFT — NON STAFF ONLY
+if (dayOfWeek === "Wednesday" && shift === "DAY" && userRole !== "staff") {
+  if (nowSeconds < 18 * 3600 || nowSeconds > 18 * 3600 + 59 * 60) {
+    return res.status(403).json({
+      message: "today is Wednesday day-shift checkout allowed only 18:00-18:59",
+    });
+  }
+}
+
+     
 
     // Day shift 07:30–09:00, checkout 18:00–18:59
     if (ciSeconds >= 7*3600 + 30*60 && ciSeconds <= 9*3600) {
