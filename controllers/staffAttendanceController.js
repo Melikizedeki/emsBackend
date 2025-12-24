@@ -128,7 +128,7 @@ export const checkOut = async (req, res) => {
 
 
      // Wednesday staff rule
-if (dayOfWeek === "Wednesday" && userRole === "staff" && nowSeconds < 09 * 3600) {
+if (dayOfWeek === "Wednesday" && userRole === "staff" && nowSeconds < 9 * 3600) {
   return res.status(403).json({
     message: "Staff can checkout after 09:00 on Wednesday",
   });
