@@ -14,7 +14,7 @@ const getCurrentTime = () =>
   new Date().toTimeString().slice(0, 8);
 
 // ======================================================
-// 1️⃣ INITIALIZE DAILY ATTENDANCE (EXCLUDE ADMINS)
+// 1️⃣ INITIALIZE DAILY ATTENDANCE (EXCLUDE ADMINS & FIELD)
 // ======================================================
 export const initializeDailyAttendance = async (req, res) => {
   try {
@@ -24,7 +24,7 @@ export const initializeDailyAttendance = async (req, res) => {
       INSERT INTO attendance (numerical_id, date, status)
       SELECT e.id, ?, 'pending'
       FROM employee e
-      WHERE e.role <> 'admin'
+      WHERE e.role NOT IN ('admin', 'field')
         AND e.id NOT IN (
           SELECT numerical_id FROM attendance WHERE date = ?
         )
@@ -33,7 +33,7 @@ export const initializeDailyAttendance = async (req, res) => {
     const [result] = await pool.query(sql, [today, today]);
 
     res.json({
-      message: "✅ Daily attendance initialized (admins excluded)",
+      message: "✅ Daily attendance initialized (admins & field excluded)",
       inserted: result.affectedRows
     });
   } catch (err) {
@@ -42,9 +42,8 @@ export const initializeDailyAttendance = async (req, res) => {
   }
 };
 
-{/*
 // ======================================================
-// 2️⃣ CHECK-IN (ADMINS BLOCKED)
+// 2️⃣ CHECK-IN (ADMINS & FIELD BLOCKED)
 // ======================================================
 export const checkIn = async (req, res) => {
   try {
@@ -52,15 +51,15 @@ export const checkIn = async (req, res) => {
     const time = getCurrentTime();
     const date = getTodayDate();
 
-    // 🔒 Block admin
+    // 🔒 Block admin & field
     const [emp] = await pool.query(
       `SELECT role FROM employee WHERE id = ?`,
       [employee_id]
     );
 
-    if (!emp.length || emp[0].role === "admin") {
+    if (!emp.length || ["admin", "field"].includes(emp[0].role)) {
       return res.status(403).json({
-        message: "❌ Admins are not allowed to check in"
+        message: "❌ Admins and field employees are not allowed to check in"
       });
     }
 
@@ -111,7 +110,7 @@ export const checkIn = async (req, res) => {
 };
 
 // ======================================================
-// 3️⃣ CHECK-OUT (ADMINS BLOCKED)
+// 3️⃣ CHECK-OUT (ADMINS & FIELD BLOCKED)
 // ======================================================
 export const checkOut = async (req, res) => {
   try {
@@ -123,9 +122,9 @@ export const checkOut = async (req, res) => {
       [employee_id]
     );
 
-    if (!emp.length || emp[0].role === "admin") {
+    if (!emp.length || ["admin", "field"].includes(emp[0].role)) {
       return res.status(403).json({
-        message: "❌ Admins are not allowed to check out"
+        message: "❌ Admins and field employees are not allowed to check out"
       });
     }
 
@@ -138,8 +137,8 @@ export const checkOut = async (req, res) => {
     const [result] = await pool.query(
       `UPDATE attendance
        SET check_out_time=?
-       WHERE numerical_id=? AND date=?
-         AND check_in_time IS NOT NULL
+       WHERE numerical_id=? AND date=? 
+         AND check_in_time IS NOT NULL 
          AND check_out_time IS NULL`,
       [time, employee_id, date]
     );
@@ -157,10 +156,8 @@ export const checkOut = async (req, res) => {
   }
 };
 
-*/}
-
 // ======================================================
-// 4️⃣ FETCH ATTENDANCE BY DATE (ADMINS EXCLUDED)
+// 4️⃣ FETCH ATTENDANCE BY DATE (ADMINS & FIELD EXCLUDED)
 // ======================================================
 export const getAttendanceByDate = async (req, res) => {
   try {
@@ -178,7 +175,7 @@ export const getAttendanceByDate = async (req, res) => {
       FROM employee e
       LEFT JOIN attendance a
         ON e.id = a.numerical_id AND a.date = ?
-      WHERE e.role <> 'admin'
+      WHERE e.role NOT IN ('admin', 'field')
       ORDER BY e.name ASC
     `;
 
@@ -191,7 +188,7 @@ export const getAttendanceByDate = async (req, res) => {
 };
 
 // ======================================================
-// 5️⃣ ATTENDANCE SUMMARY (CARD COUNTS – ALWAYS CORRECT)
+// 5️⃣ ATTENDANCE SUMMARY (CARD COUNTS – ADMINS & FIELD EXCLUDED)
 // ======================================================
 export const getAttendanceSummary = async (req, res) => {
   try {
@@ -205,7 +202,7 @@ export const getAttendanceSummary = async (req, res) => {
       FROM employee e
       LEFT JOIN attendance a
         ON e.id = a.numerical_id AND a.date = ?
-      WHERE e.role <> 'admin'
+      WHERE e.role NOT IN ('admin', 'field')
     `;
 
     const [[summary]] = await pool.query(sql, [date]);
