@@ -12,6 +12,7 @@ const getLocalDate = (offsetDays = 0) => {
   now.setDate(now.getDate() + offsetDays);
   return now.toISOString().split("T")[0]; // YYYY-MM-DD
 };
+const getLocalTime = () => getLocalNow().toTimeString().slice(0, 8);
 const getLocalDay = () => getLocalNow().getDay(); // 0=Sun ... 6=Sat
 
 // ----------------------------------------
@@ -23,23 +24,29 @@ cron.schedule(
     try {
       const today = getLocalDate();
       const day = getLocalDay();
-      if (day === 0 || day === 6) return; // skip weekends
 
-      await pool.query(
+      console.log("⏰ [Initialize Cron] Triggered at:", getLocalNow(), "Day:", day);
+
+      if (day === 0 || day === 6) {
+        console.log("⏩ Weekend — skipping attendance initialization");
+        return;
+      }
+
+      const [result] = await pool.query(
         `
         INSERT INTO attendance (numerical_id, date, status)
         SELECT id, ?, 'pending'
         FROM employee
         WHERE id NOT IN (
-          SELECT numerical_id FROM attendance WHERE date = ?
+          SELECT numerical_id FROM attendance WHERE DATE(date) = ?
         )
         `,
         [today, today]
       );
 
-      console.log("✅ Attendance initialized:", today);
+      console.log(`✅ Attendance initialized for ${today}. Rows inserted: ${result.affectedRows}`);
     } catch (err) {
-      console.error("❌ Init attendance error:", err);
+      console.error("❌ Initialize attendance error:", err);
     }
   },
   { timezone: TZ }
@@ -54,9 +61,15 @@ cron.schedule(
     try {
       const today = getLocalDate();
       const day = getLocalDay();
-      if (day === 0 || day === 6) return;
 
-      await pool.query(
+      console.log("⏰ [Finalize Cron] Triggered at:", getLocalNow(), "Day:", day);
+
+      if (day === 0 || day === 6) {
+        console.log("⏩ Weekend — skipping attendance finalization");
+        return;
+      }
+
+      const [result] = await pool.query(
         `
         UPDATE attendance
         SET
@@ -67,15 +80,17 @@ cron.schedule(
           END,
           check_in_time  = IFNULL(check_in_time, '00:00:00'),
           check_out_time = IFNULL(check_out_time, '00:00:00')
-        WHERE date = ?
+        WHERE DATE(date) = ?
         `,
         [today]
       );
 
-      console.log("✅ Attendance finalized:", today);
+      console.log(`✅ Attendance finalized for ${today}. Rows updated: ${result.affectedRows}`);
     } catch (err) {
       console.error("❌ Finalize attendance error:", err);
     }
   },
   { timezone: TZ }
 );
+
+console.log("⏳ Cron jobs loaded successfully.");
