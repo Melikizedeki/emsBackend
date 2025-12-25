@@ -171,22 +171,21 @@ export const checkOut = async (req, res) => {
 export const getAttendanceByEmployee = async (req, res) => {
   try {
     const { numerical_id } = req.params;
-    const today = getLocalDate();
 
     const [rows] = await pool.query(
       `
       SELECT *
       FROM attendance
-      WHERE numerical_id = ? AND date = ?
+      WHERE numerical_id = ?
       ORDER BY date DESC
       `,
-      [numerical_id, today]
+      [numerical_id]
     );
 
-    // ✅ ALWAYS return array
-    res.json(rows);
+    res.json(rows); // ✅ ARRAY
   } catch (err) {
     console.error("❌ Get attendance error:", err);
-    res.status(500).json({ message: "Failed to load attendance" });
+    res.status(500).json({ error: err.message });
   }
 };
+;
