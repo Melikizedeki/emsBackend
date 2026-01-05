@@ -129,7 +129,7 @@ export const checkOut = async (req, res) => {
 
     // 🟡 MONDAY: 17:00 – 23:45
     if (day === 1) {
-      const start = 17 * 60;      // 17:00
+      const start = 15 * 60;      // 17:00
       const end = 23 * 60 + 45;   // 23:45
 
       if (nowMinutes < start || nowMinutes > end) {
