@@ -119,6 +119,7 @@ export const checkOut = async (req, res) => {
 
     const day = getLocalDay();
     const now = getLocalTime();
+    const nowMinutes = timeToMinutes(now);
 
     if (day === 0 || day === 6) {
       return res.status(400).json({
@@ -126,17 +127,23 @@ export const checkOut = async (req, res) => {
       });
     }
 
-    // 🟡 MONDAY: 15:00 – 23:45
+    // 🟡 MONDAY: 17:00 – 23:45
     if (day === 1) {
-      if (now < "17:00:00" || now > "23:45:00") {
+      const start = 17 * 60;      // 17:00
+      const end = 23 * 60 + 45;   // 23:45
+
+      if (nowMinutes < start || nowMinutes > end) {
         return res.status(400).json({
-          message: "Monday check-out allowed 15:00–23:45 only."
+          message: "Monday check-out allowed 17:00–23:45 only."
         });
       }
     }
-    // 🟢 OTHER WEEKDAYS: 18:00 – 23:45
+    // 🟢 OTHER DAYS: 18:00 – 23:45
     else {
-      if (now < "18:00:00" || now > "23:45:00") {
+      const start = 18 * 60;
+      const end = 23 * 60 + 45;
+
+      if (nowMinutes < start || nowMinutes > end) {
         return res.status(400).json({
           message: "Check-out allowed 18:00–23:45 only."
         });
