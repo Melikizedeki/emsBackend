@@ -1,8 +1,8 @@
 import pool from "../configs/db.js";
 
 const TZ = "Africa/Dar_es_Salaam";
-const COMPANY_CENTER = { lat: -4.822958, lng: 34.76901956 };
-const GEOFENCE_RADIUS = 10000; // meters
+  const COMPANY_CENTER = { lat: -3.69017, lng: 33.41387 };
+const GEOFENCE_RADIUS = 100; // meters
 
 // ----------------------------------------
 // Helpers
