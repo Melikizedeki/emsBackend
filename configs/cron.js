@@ -55,7 +55,7 @@ cron.schedule(
    🕚 23:50 — FINALIZE ATTENDANCE (MON–FRI + SATURDAY)
 ====================================================== */
 cron.schedule(
-  "27 17 * * *",
+  "50 23 * * *",
   async () => {
     try {
       const today = getLocalDate();
