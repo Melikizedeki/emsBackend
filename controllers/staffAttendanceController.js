@@ -120,14 +120,14 @@ export const checkOut = async (req, res) => {
     const day = getLocalDay();
     const now = getLocalTime();
 
-    if (day === 1) { // Saturday
+    if (day === 6) { // Saturday
       if (now < "17:40:00" || now > "23:45:00") {
         return res.status(400).json({
           message: "Saturday check-out allowed 17:40–23:45."
         });
       }
     } 
-    else if (day >= 2 && day <= 5) { // Mon–Fri
+    else if (day >= 1 && day <= 5) { // Mon–Fri
       if (now < "18:00:00" || now > "23:45:00") {
         return res.status(400).json({
           message: "Check-out allowed 18:00–23:45."
