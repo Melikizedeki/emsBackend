@@ -128,7 +128,7 @@ export const checkOut = async (req, res) => {
 
     // 🟡 MONDAY: 15:00 – 23:45
     if (day === 1) {
-      if (now < "15:00:00" || now > "23:45:00") {
+      if (now < "17:00:00" || now > "23:45:00") {
         return res.status(400).json({
           message: "Monday check-out allowed 15:00–23:45 only."
         });
