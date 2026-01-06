@@ -14,46 +14,47 @@ import { adminAttendanceRouter } from "./routes/adminAttendanceRoutes.js";
 import { payrollRouter } from "./routes/payrollRoute.js";
 import { reportRouter } from "./routes/reportRoute.js";
 import "./configs/cron.js"; // <--- This runs your cron jobs automatically
-// ✅ Load env variables
+
+// ✅ Load environment variables
 dotenv.config();
 
-// ✅ Import cron jobs
-//setupCronJobs();
-
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// ✅ Middleware
-const allowedOrigins = [
-  "https://gilitu.org", // your live frontend on Render
-  "http://localhost:5173"                  // local dev frontend
-];
-
-app.use(cors({
-  origin: function(origin, callback){
-    // allow requests with no origin (like Postman) or if in allowedOrigins
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  credentials: true
-}));
-
+// ✅ Body parser middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// ✅ CORS configuration
+const allowedOrigins = [
+  "https://gilitu.org",       // Production frontend
+  "http://gilitu.org",        // In case HTTP is used
+  "http://localhost:5173"     // Local dev frontend
+];
+
+app.use(cors({
+  origin: function(origin, callback) {
+    if (!origin) return callback(null, true); // allow Postman or server-to-server requests
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
+// ✅ Enable preflight requests for all routes
+app.options("*", cors());
 
 // ✅ Routes
 app.use("/api/credential", userRouter);
 app.use("/api", employeeRouter);
 app.use("/api", departmentRouter);
 app.use("/api", permissionsRouter);
-app.use("/api/", eventsRouter);
+app.use("/api", eventsRouter);
 app.use("/api/events", eventPayRouter);
 app.use("/api/staff/events", eventPayStaffRouter);
 app.use("/api", attendanceRouter);
@@ -61,8 +62,8 @@ app.use("/api/admin", adminAttendanceRouter);
 app.use("/api/pay", payrollRouter);
 app.use("/api/report", reportRouter);
 
-// ✅ Start Server
+// ✅ Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  // console.log removed for production
+  // Server started
 });
