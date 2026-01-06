@@ -27,21 +27,23 @@ app.use(cookieParser());
 // ✅ CORS
 const allowedOrigins = [
   "https://gilitu.org",
-  "http://gilitu.org",
-  "http://localhost:5173"
+  "http://gilitu.org",      // in case HTTP is used
+  "http://localhost:5173"   // dev
 ];
 
 app.use(cors({
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true);
+    if (!origin) return callback(null, true); // Postman / server-to-server requests
     if (allowedOrigins.includes(origin)) return callback(null, true);
     callback(new Error("Not allowed by CORS"));
   },
   credentials: true,
-  methods: ["GET","POST","PUT","DELETE","OPTIONS"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
-app.options("*", cors()); // Preflight
+
+// Handle preflight
+app.options("*", cors());
 
 // ✅ Routes
 app.use("/api/credential", userRouter);
