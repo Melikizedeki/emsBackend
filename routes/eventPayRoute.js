@@ -4,7 +4,6 @@ import {
   addPayment,
   deletePayment,
   updatePayment,
-
 } from "../controllers/eventPayController.js";
 
 const router = express.Router();
@@ -15,15 +14,10 @@ router.get("/:eventId/payments", getPaymentsByEvent);
 // POST new payment for an event
 router.post("/:eventId/payments", addPayment);
 
-// PUT update a payment
-router.put("/payments/:id", updatePayment);
+// PUT update a payment by payment ID
+router.put("/payments/:paymentId", updatePayment);
 
-// DELETE a payment
-router.delete("/payments/:id", deletePayment);
-
-
-
-
-
+// DELETE a payment by payment ID
+router.delete("/payments/:paymentId", deletePayment);
 
 export { router as eventPayRouter };
